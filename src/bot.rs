@@ -141,8 +141,9 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
         ));
         bot.wait_updates(1).await;
         // eprintln!("held item: {:#?}", bot.get_held_item());
-        if let Some(container) = bot.wait_for_container_open(Some(400)).await {
-            let slots = container.slots().expect("we made sure container is open");
+        if let Some(container) = bot.wait_for_container_open(Some(400)).await
+            && let Some(slots) = container.slots()
+        {
             // eprintln!(
             //     "we got container, slots: {:#?}",
             //     slots
