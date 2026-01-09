@@ -25,13 +25,12 @@ pub async fn bot_jump(data: web::Data<Arc<Sender<Instruction>>>) -> impl Respond
 
 #[post("/tab")]
 pub async fn bot_tab(data: web::Data<Arc<Sender<Instruction>>>) -> impl Responder {
-    // let (tx, mut rx) = mpsc::channel::<String>(1);
-    match data.send(Instruction::TabList).await {
-        Ok(_) => "Sent instruction".to_string(),
-        // match rx.recv().await {
-        //             Some(tablist) => tablist,
-        //             None => "failed receiving tablist".to_string(),
-        //         }
+    let (tx, mut rx) = mpsc::channel::<String>(1);
+    match data.send(Instruction::TabList(tx)).await {
+        Ok(_) => match rx.recv().await {
+            Some(tablist) => tablist,
+            None => "failed receiving tablist".to_string(),
+        },
         Err(_) => "failed sending tab instruction".to_string(),
     }
 }

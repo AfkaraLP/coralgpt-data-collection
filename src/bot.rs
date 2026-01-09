@@ -29,7 +29,7 @@ pub enum Instruction {
     Chat(String),
     #[default]
     Jump,
-    TabList,
+    TabList(Sender<String>),
 }
 
 #[derive(Default, Clone, Component, PartialEq, Eq, PartialOrd, Ord)]
@@ -95,17 +95,20 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                 match instruction {
                     Instruction::Chat(message) => bot.chat(message),
                     Instruction::Jump => bot.jump(),
-                    Instruction::TabList => {
+                    Instruction::TabList(sender) => {
                         let mut players = String::new();
                         eprintln!("tablist:");
                         for (_, player) in bot.tab_list().into_iter() {
                             eprintln!("{}", player.display_name.clone().unwrap_or_default());
-                            players.push_str(&player.display_name.unwrap_or_default().to_string());
+                            players.push_str(&format!(
+                                "{}\n",
+                                player.display_name.unwrap_or_default()
+                            ));
                         }
-                        // match sender.send(players).await {
-                        //     Ok(_) => eprintln!("successfully sent tablist..."),
-                        //     Err(_) => eprintln!("failed to send tablist..."),
-                        // }
+                        match sender.send(players).await {
+                            Ok(_) => eprintln!("successfully sent tablist..."),
+                            Err(_) => eprintln!("failed to send tablist..."),
+                        }
                     }
                 }
             }
