@@ -132,12 +132,14 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
         if let Some(container) = bot.wait_for_container_open(Some(400)).await
             && let Some(slots) = container.slots()
         {
-            let bed_idx = slots
+            let Some(bed_idx) = slots
                 .iter()
                 .enumerate()
                 .find(|(_idx, item)| item.kind().eq(&ItemKind::RedBed))
-                .expect("coral might removed bed item")
-                .0;
+                .map(|v| v.0)
+            else {
+                return eprintln!("couldn't get the bed idx");
+            };
             tokio::time::sleep(Duration::from_millis(500)).await;
             container.left_click(bed_idx);
             bot.set_selected_hotbar_slot(3);
