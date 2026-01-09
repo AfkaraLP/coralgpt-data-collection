@@ -1,28 +1,15 @@
-use std::{fs::OpenOptions, io::Write, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use azalea::{
     prelude::*, protocol::packets::game::ServerboundGamePacket, registry::builtin::ItemKind,
 };
-use chrono::Local;
-use tokio::{
-    sync::{
-        Mutex,
-        mpsc::{Receiver, Sender},
-    },
-    time,
-};
+use tokio::{sync::mpsc::Sender, time};
 
-use crate::PWD;
+use crate::{PWD, State, message::Message};
 const REGISTER_REQUEST: &str = "CORALMC » Per favore, esegui la registrazione con il comando: /register [password] [confermaPassword]";
 const LOGIN_REQUEST: &str =
     "CORALMC » Per favore, esegui l'autenticazione con il comando: /login [password]";
 const LOGIN_SUCCESS: &str = "Login eseguito con successo.";
-#[derive(Default, Clone, Component)]
-pub struct State {
-    pub location: Arc<Mutex<BotLocation>>,
-    pub going_to_bedwars: Arc<Mutex<bool>>,
-    pub recv_instruction: Arc<Mutex<Option<Receiver<Instruction>>>>,
-}
 
 #[derive(Default, Clone, Component)]
 pub enum Instruction {
@@ -144,13 +131,6 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
         if let Some(container) = bot.wait_for_container_open(Some(400)).await
             && let Some(slots) = container.slots()
         {
-            // eprintln!(
-            //     "we got container, slots: {:#?}",
-            //     slots
-            //         .iter()
-            //         .enumerate()
-            //         .collect::<Vec<(usize, &ItemStack)>>()
-            // );
             let bed_idx = slots
                 .iter()
                 .enumerate()
@@ -181,27 +161,34 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
             .trim()
             .starts_with('[')
     {
-        handle_file_write(message, "./chat.log");
+        if let Some(message) = Message::parse(&message.message().to_string())
+            && let Some(conn) = state.conn.lock().await.as_ref()
+        {
+            match message.insert(conn) {
+                Ok(_) => {}
+                Err(_) => eprintln!("failed writing to db..."),
+            };
+        }
     }
 }
 
-fn handle_file_write(message: azalea::chat::ChatPacket, path: &str) {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .unwrap_or_else(|_| {
-            eprintln!("failed opening log 文件 (wénjiàn)");
-            std::process::exit(1);
-        });
+// fn handle_file_write(message: azalea::chat::ChatPacket, path: &str) {
+//     let mut file = OpenOptions::new()
+//         .create(true)
+//         .append(true)
+//         .open(path)
+//         .unwrap_or_else(|_| {
+//             eprintln!("failed opening log 文件 (wénjiàn)");
+//             std::process::exit(1);
+//         });
 
-    let timestamp = Local::now().format("[%m/%d %H:%M]").to_string();
-    let content = format!("{} {}\n", timestamp, message.message());
+//     let timestamp = Local::now().format("[%m/%d %H:%M]").to_string();
+//     let content = format!("{} {}\n", timestamp, message.message());
 
-    if file.write_all(content.as_bytes()).is_err() {
-        eprintln!("failed writing into log");
-    }
-}
+//     if file.write_all(content.as_bytes()).is_err() {
+//         eprintln!("failed writing into log");
+//     }
+// }
 
 async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket, state: &State) {
     if message

@@ -65,6 +65,7 @@
               cargo-watch
               rust-analyzer
               gcc
+              sqlite
             ];
 
             env = {
