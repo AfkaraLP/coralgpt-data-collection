@@ -45,6 +45,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                     let new_bot = bot.clone();
                     if is_in_bedwars_lobby {
                         tokio::spawn(async move {
+                            new_bot.walk(azalea::WalkDirection::Backward);
                             let mut interval = time::interval(Duration::from_secs(1));
                             loop {
                                 interval.tick().await;
