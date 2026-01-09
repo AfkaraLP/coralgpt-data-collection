@@ -22,6 +22,7 @@ mod server;
 
 pub const USERNAME: &str = "CoralGPTv0d1";
 pub const PWD: &str = "REDACTED";
+pub const PORT: u16 = 6767;
 
 use tokio::signal;
 
@@ -63,7 +64,7 @@ async fn main() -> AppExit {
         .expect("failed instantiating db");
 
     let server = tokio::spawn(async move {
-        eprintln!("listening on port 8080");
+        eprintln!("listening on port {PORT}");
         eprintln!("available routes: Post(chat), Post(jump), Post(tab)");
         HttpServer::new(move || {
             App::new()
@@ -72,7 +73,7 @@ async fn main() -> AppExit {
                 .service(bot_tab)
                 .service(bot_jump)
         })
-        .bind(("127.0.0.1", 8080))
+        .bind(("127.0.0.1", PORT))
         .expect("server failed")
         .run()
         .await
