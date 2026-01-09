@@ -1,6 +1,7 @@
 //! A bot that logs chat messages and the number that we've received to the console.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use actix_web::{App, HttpServer, web};
 use azalea::prelude::*;
@@ -57,7 +58,8 @@ async fn main() -> AppExit {
         timestamp TEXT DEFAULT (datetime('now')),
         starcount INTEGER DEFAULT 0,
         rank TEXT NOT NULL,
-        message TEXT NOT NULL
+        message TEXT NOT NULL,
+        ping INTEGER
     );",
             [],
         )
@@ -85,6 +87,7 @@ async fn main() -> AppExit {
     let client = ClientBuilder::new()
         .set_handler(handle)
         .set_state(state)
+        .reconnect_after(Duration::from_secs(10))
         .start(account, "wind.coralmc.it");
 
     tokio::select! {

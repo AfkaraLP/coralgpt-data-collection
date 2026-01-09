@@ -2,11 +2,12 @@ use chrono::Utc;
 use rusqlite::params;
 
 pub struct Message {
-    name: String,
-    message: String,
-    stars: usize,
-    timestamp: String,
-    rank: String,
+    pub name: String,
+    pub message: String,
+    pub stars: usize,
+    pub timestamp: String,
+    pub rank: String,
+    pub ping: Option<i64>,
 }
 impl Message {
     #[must_use]
@@ -37,19 +38,27 @@ impl Message {
             stars,
             timestamp,
             rank,
+            ping: None,
         })
+    }
+
+    #[must_use]
+    pub fn set_ping(mut self, ping: i64) -> Self {
+        self.ping.replace(ping);
+        self
     }
 
     pub fn insert(&self, conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         conn.execute(
-            "INSERT INTO messages (username, timestamp, starcount, rank, message) 
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO messages (username, timestamp, starcount, rank, message, ping) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 self.name,
                 self.timestamp,
                 self.stars as i64,
                 self.rank,
-                self.message
+                self.message,
+                self.ping
             ],
         )?;
         Ok(())

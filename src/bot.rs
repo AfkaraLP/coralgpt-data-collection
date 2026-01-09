@@ -46,16 +46,12 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                     if is_in_bedwars_lobby {
                         tokio::spawn(async move {
                             new_bot.walk(azalea::WalkDirection::Backward);
-                            let mut interval = time::interval(Duration::from_secs(1));
+                            let mut interval = time::interval(Duration::from_secs(10));
                             loop {
                                 interval.tick().await;
                                 new_bot.jump();
                             }
                         });
-                        eprintln!("current bedwars lobby: ");
-                        for (_, player) in bot.tab_list().into_iter() {
-                            eprintln!("{}", player.display_name.unwrap_or_default());
-                        }
                         break eprintln!("successfully joined the bedwars lobby...");
                     }
                     if let Some(inventory) = bot.open_inventory()
@@ -156,17 +152,19 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
 async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, state: State) {
     println!("{}", message.message().to_ansi());
     handle_register_login(bot, &message, &state).await;
+    let message = message.message().to_string();
     if state.location.lock().await.eq(&BotLocation::BedwarsLobby)
-        && message
-            .message()
-            .to_string()
-            .to_lowercase()
-            .trim()
-            .starts_with('[')
+        && message.to_lowercase().trim().starts_with('[')
     {
-        if let Some(message) = Message::parse(&message.message().to_string())
+        if let Some(mut message) = Message::parse(&message)
             && let Some(conn) = state.conn.lock().await.as_ref()
         {
+            let username = message.name.as_str();
+            if let Some(player_uuid) = bot.player_uuid_by_username(username)
+                && let Some(player) = bot.tab_list().get(&player_uuid)
+            {
+                message = message.set_ping(player.latency as i64);
+            }
             match message.insert(conn) {
                 Ok(_) => {}
                 Err(_) => eprintln!("failed writing to db..."),
@@ -174,24 +172,6 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         }
     }
 }
-
-// fn handle_file_write(message: azalea::chat::ChatPacket, path: &str) {
-//     let mut file = OpenOptions::new()
-//         .create(true)
-//         .append(true)
-//         .open(path)
-//         .unwrap_or_else(|_| {
-//             eprintln!("failed opening log 文件 (wénjiàn)");
-//             std::process::exit(1);
-//         });
-
-//     let timestamp = Local::now().format("[%m/%d %H:%M]").to_string();
-//     let content = format!("{} {}\n", timestamp, message.message());
-
-//     if file.write_all(content.as_bytes()).is_err() {
-//         eprintln!("failed writing into log");
-//     }
-// }
 
 async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket, state: &State) {
     if message
@@ -209,11 +189,8 @@ async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket,
     }
 
     if message.message().to_string().trim().contains(LOGIN_SUCCESS) {
-        // Overkill deadlock prevention
-        // std::thread::spawn(move || {
         eprintln!("setting location to lobby...");
         let mut location = state.location.lock().await;
         *location = BotLocation::Lobby;
-        // });
     }
 }
