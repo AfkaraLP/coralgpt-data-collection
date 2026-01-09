@@ -1237,7 +1237,6 @@ dependencies = [
  "anyhow",
  "azalea",
  "chrono",
- "parking_lot",
  "tokio",
  "uuid",
 ]
