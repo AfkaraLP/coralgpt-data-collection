@@ -87,18 +87,34 @@ async fn main() -> AppExit {
     let client = ClientBuilder::new()
         .set_handler(handle)
         .set_state(state)
-        .reconnect_after(Duration::from_secs(10))
-        .start(account, "wind.coralmc.it");
+        .reconnect_after(Duration::from_secs(60))
+        .start(account, "wind.coralmc.it")
+        .await;
 
-    tokio::select! {
-        _ = signal::ctrl_c() => {
-            eprintln!("shutting down...");
-        }
-        _ = client => {
-            eprintln!("client exited");
-        }
-    }
+    shutdown_signal().await;
 
     server.abort();
     AppExit::Success
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            eprintln!("shutting down via Ctrl+C");
+        }
+        _ = sigterm.recv() => {
+            eprintln!("shutting down via SIGTERM");
+        }
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    signal::ctrl_c().await.expect("failed to listen for Ctrl+C");
+    eprintln!("shutting down");
 }
