@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use azalea::{
-    prelude::*, protocol::packets::game::ServerboundGamePacket, registry::builtin::ItemKind,
-    WalkDirection,
+    WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
+    registry::builtin::ItemKind,
 };
 use tokio::{sync::mpsc::Sender, time};
 
@@ -163,11 +163,11 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
 async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, state: State) {
     println!("{}", message.message().to_ansi());
     handle_register_login(bot, &message, &state).await;
-    let message = message.message().to_string();
     {
         let mut messages = state.messages.lock().await;
-        messages.push(message.clone());
+        messages.push(message.message().to_html());
     }
+    let message = message.message().to_string();
     if state.location.lock().await.eq(&BotLocation::BedwarsLobby)
         && message.to_lowercase().trim().starts_with('[')
     {
