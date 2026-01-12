@@ -16,7 +16,7 @@ use crate::buffer::FifoBuffer;
 use crate::server::{MessageLog, bot_messages};
 use crate::{
     bot::{BotLocation, Instruction, handle},
-    server::{bot_chat, bot_jump, bot_tab},
+    server::{bot_chat, bot_jump, bot_tab, index},
 };
 
 mod bot;
@@ -78,7 +78,7 @@ async fn main() -> AppExit {
     let messages_bot = messages.clone();
     let server = tokio::spawn(async move {
         eprintln!("listening on port {PORT}");
-        eprintln!("available routes: Post(chat), Post(jump), Post(tab), Get(messages)");
+        eprintln!("UI available at http://127.0.0.1:{PORT}/");
         HttpServer::new(move || {
             let messages_clone = messages.clone();
             App::new()
@@ -86,6 +86,7 @@ async fn main() -> AppExit {
                 .app_data(web::Data::new(MessageLog {
                     messages: messages_clone,
                 }))
+                .service(index)
                 .service(bot_chat)
                 .service(bot_tab)
                 .service(bot_jump)
