@@ -6,7 +6,7 @@ use azalea::{
 };
 use tokio::{sync::mpsc::Sender, time};
 
-use crate::{PWD, State, message::Message};
+use crate::{PWD, State, message::Message, server::WsServerMessage};
 const REGISTER_REQUEST: &str = "CORALMC » Per favore, esegui la registrazione con il comando: /register [password] [confermaPassword]";
 const LOGIN_REQUEST: &str =
     "CORALMC » Per favore, esegui l'autenticazione con il comando: /login [password]";
@@ -163,9 +163,14 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
 async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, state: State) {
     println!("{}", message.message().to_ansi());
     handle_register_login(bot, &message, &state).await;
+    let html_message = message.message().to_html();
     {
         let mut messages = state.messages.lock().await;
-        messages.push(message.message().to_html());
+        messages.push(html_message.clone());
+    }
+    // Broadcast new message to all connected WebSocket clients
+    if let Some(ref broadcaster) = state.broadcaster {
+        broadcaster.send(WsServerMessage::NewMessage(html_message));
     }
     let message = message.message().to_string();
     if state.location.lock().await.eq(&BotLocation::BedwarsLobby)
