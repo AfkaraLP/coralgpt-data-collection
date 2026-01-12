@@ -153,6 +153,10 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
     println!("{}", message.message().to_ansi());
     handle_register_login(bot, &message, &state).await;
     let message = message.message().to_string();
+    {
+        let mut messages = state.messages.lock().await;
+        messages.push(message.clone());
+    }
     if state.location.lock().await.eq(&BotLocation::BedwarsLobby)
         && message.to_lowercase().trim().starts_with('[')
     {

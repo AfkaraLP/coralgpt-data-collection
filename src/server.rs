@@ -1,8 +1,15 @@
-use actix_web::{Responder, post, web};
+use actix_web::{Responder, get, post, web};
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::{
+    Mutex,
+    mpsc::{self, Sender},
+};
 
-use crate::bot::Instruction;
+use crate::{bot::Instruction, buffer::FifoBuffer};
+
+pub struct MessageLog {
+    pub messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+}
 
 #[post("/chat")]
 pub async fn bot_chat(
@@ -33,4 +40,13 @@ pub async fn bot_tab(data: web::Data<Arc<Sender<Instruction>>>) -> impl Responde
         },
         Err(_) => "failed sending tab instruction".to_string(),
     }
+}
+
+#[get("/messages")]
+pub async fn bot_messages(data: web::Data<MessageLog>) -> impl Responder {
+    let messages = data.messages.lock().await;
+    messages
+        .iter()
+        .map(|msg| format!("{msg}\n"))
+        .collect::<String>()
 }
