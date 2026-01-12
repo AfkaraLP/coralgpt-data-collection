@@ -13,7 +13,7 @@ use azalea::{
 use tokio::sync::{Mutex, mpsc::Receiver};
 
 use crate::buffer::FifoBuffer;
-use crate::server::{MessageLog, bot_messages};
+use crate::server::{Broadcaster, MessageLog, bot_messages, ws_handler};
 use crate::{
     bot::{BotLocation, Instruction, handle},
     server::{bot_chat, bot_get_slot, bot_jump, bot_slot, bot_sneak, bot_tab, bot_walk, index},
@@ -37,6 +37,7 @@ pub struct State {
     pub recv_instruction: Arc<Mutex<Option<Receiver<Instruction>>>>,
     pub conn: Arc<Mutex<Option<rusqlite::Connection>>>,
     pub messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+    pub broadcaster: Option<Arc<Broadcaster>>,
 }
 
 impl State {
@@ -44,11 +45,13 @@ impl State {
         recv_instruction: Receiver<Instruction>,
         conn: rusqlite::Connection,
         messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+        broadcaster: Arc<Broadcaster>,
     ) -> Self {
         Self {
             conn: Arc::new(Mutex::new(Some(conn))),
             recv_instruction: Arc::new(Mutex::new(Some(recv_instruction))),
             messages,
+            broadcaster: Some(broadcaster),
             ..Default::default()
         }
     }
@@ -75,10 +78,15 @@ async fn main() -> AppExit {
         )
         .expect("failed instantiating db");
 
+    // Create broadcaster for WebSocket message distribution (shared between server and bot)
+    let broadcaster = Arc::new(Broadcaster::new());
+    let broadcaster_server = broadcaster.clone();
+
     let messages_bot = messages.clone();
     let server = tokio::spawn(async move {
         eprintln!("listening on port {PORT}");
         eprintln!("UI available at http://127.0.0.1:{PORT}/");
+
         HttpServer::new(move || {
             let messages_clone = messages.clone();
             App::new()
@@ -86,7 +94,9 @@ async fn main() -> AppExit {
                 .app_data(web::Data::new(MessageLog {
                     messages: messages_clone,
                 }))
+                .app_data(web::Data::new(broadcaster_server.clone()))
                 .service(index)
+                .service(ws_handler)
                 .service(bot_chat)
                 .service(bot_tab)
                 .service(bot_jump)
@@ -103,7 +113,7 @@ async fn main() -> AppExit {
     });
 
     let account = Account::offline(USERNAME);
-    let state = State::new(rx, connection, messages_bot);
+    let state = State::new(rx, connection, messages_bot, broadcaster);
 
     let client = ClientBuilder::new()
         .set_handler(handle)

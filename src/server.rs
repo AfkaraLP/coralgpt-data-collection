@@ -1,12 +1,323 @@
-use actix_web::{HttpResponse, Responder, get, post, web};
+use actix::{ActorContext, ActorFutureExt, AsyncContext, WrapFuture};
+use actix_web::{HttpRequest, HttpResponse, Responder, get, post, rt, web};
+use actix_web_actors::ws;
 use azalea::WalkDirection;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{
     Mutex,
+    broadcast,
     mpsc::{self, Sender},
 };
 
 use crate::{bot::Instruction, buffer::FifoBuffer};
+
+// WebSocket heartbeat interval
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
+
+// WebSocket message types
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", content = "data")]
+pub enum WsClientMessage {
+    #[serde(rename = "chat")]
+    Chat(String),
+    #[serde(rename = "jump")]
+    Jump,
+    #[serde(rename = "tab")]
+    Tab,
+    #[serde(rename = "walk")]
+    Walk(String),
+    #[serde(rename = "sneak")]
+    Sneak(bool),
+    #[serde(rename = "slot")]
+    Slot(u8),
+    #[serde(rename = "getSlot")]
+    GetSlot,
+    #[serde(rename = "getMessages")]
+    GetMessages,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(tag = "type", content = "data")]
+pub enum WsServerMessage {
+    #[serde(rename = "messages")]
+    Messages(Vec<String>),
+    #[serde(rename = "newMessage")]
+    NewMessage(String),
+    #[serde(rename = "players")]
+    Players(Vec<String>),
+    #[serde(rename = "slot")]
+    Slot(u8),
+    #[serde(rename = "result")]
+    Result { success: bool, message: String },
+}
+
+// Broadcast channel for pushing messages to all clients
+pub struct Broadcaster {
+    pub tx: broadcast::Sender<WsServerMessage>,
+}
+
+impl Default for Broadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Broadcaster {
+    pub fn new() -> Self {
+        let (tx, _) = broadcast::channel(100);
+        Self { tx }
+    }
+
+    pub fn send(&self, msg: WsServerMessage) {
+        let _ = self.tx.send(msg);
+    }
+}
+
+// WebSocket session
+pub struct WsSession {
+    hb: Instant,
+    instruction_tx: Arc<Sender<Instruction>>,
+    messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+    broadcaster: Arc<Broadcaster>,
+    broadcast_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl WsSession {
+    pub fn new(
+        instruction_tx: Arc<Sender<Instruction>>,
+        messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+        broadcaster: Arc<Broadcaster>,
+    ) -> Self {
+        Self {
+            hb: Instant::now(),
+            instruction_tx,
+            messages,
+            broadcaster,
+            broadcast_task: None,
+        }
+    }
+
+    fn heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
+            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
+                ctx.stop();
+                return;
+            }
+            ctx.ping(b"");
+        });
+    }
+
+    fn send_json(&self, ctx: &mut ws::WebsocketContext<Self>, msg: &WsServerMessage) {
+        if let Ok(json) = serde_json::to_string(msg) {
+            ctx.text(json);
+        }
+    }
+
+    fn handle_message(&mut self, text: &str, ctx: &mut ws::WebsocketContext<Self>) {
+        if let Ok(client_msg) = serde_json::from_str::<WsClientMessage>(text) {
+            let tx = self.instruction_tx.clone();
+
+            match client_msg {
+                WsClientMessage::Chat(msg) => {
+                    let tx = tx.clone();
+                    rt::spawn(async move {
+                        let _ = tx.send(Instruction::Chat(msg)).await;
+                    });
+                    self.send_json(ctx, &WsServerMessage::Result {
+                        success: true,
+                        message: "sent".into(),
+                    });
+                }
+                WsClientMessage::Jump => {
+                    let tx = tx.clone();
+                    rt::spawn(async move {
+                        let _ = tx.send(Instruction::Jump).await;
+                    });
+                    self.send_json(ctx, &WsServerMessage::Result {
+                        success: true,
+                        message: "jumped".into(),
+                    });
+                }
+                WsClientMessage::Tab => {
+                    let tx = tx.clone();
+                    ctx.spawn(async move {
+                        let (resp_tx, mut resp_rx) = mpsc::channel::<String>(1);
+                        if tx.send(Instruction::TabList(resp_tx)).await.is_ok() {
+                            if let Some(tablist) = resp_rx.recv().await {
+                                let players: Vec<String> = tablist
+                                    .split('\n')
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| s.to_string())
+                                    .collect();
+                                return Some(WsServerMessage::Players(players));
+                            }
+                        }
+                        None
+                    }.into_actor(self).map(|msg, _act, ctx| {
+                        if let Some(msg) = msg {
+                            if let Ok(json) = serde_json::to_string(&msg) {
+                                ctx.text(json);
+                            }
+                        }
+                    }));
+                }
+                WsClientMessage::Walk(direction) => {
+                    let dir = match direction.as_str() {
+                        "forward" => Some(WalkDirection::Forward),
+                        "backward" => Some(WalkDirection::Backward),
+                        "left" => Some(WalkDirection::Left),
+                        "right" => Some(WalkDirection::Right),
+                        "forward-left" => Some(WalkDirection::ForwardLeft),
+                        "forward-right" => Some(WalkDirection::ForwardRight),
+                        "backward-left" => Some(WalkDirection::BackwardLeft),
+                        "backward-right" => Some(WalkDirection::BackwardRight),
+                        "stop" => Some(WalkDirection::None),
+                        _ => None,
+                    };
+                    if let Some(d) = dir {
+                        let tx = tx.clone();
+                        rt::spawn(async move {
+                            let _ = tx.send(Instruction::Walk(d)).await;
+                        });
+                    }
+                }
+                WsClientMessage::Sneak(sneaking) => {
+                    let tx = tx.clone();
+                    rt::spawn(async move {
+                        let _ = tx.send(Instruction::Sneak(sneaking)).await;
+                    });
+                    self.send_json(ctx, &WsServerMessage::Result {
+                        success: true,
+                        message: if sneaking { "sneaking" } else { "stopped sneaking" }.into(),
+                    });
+                }
+                WsClientMessage::Slot(slot) => {
+                    if slot <= 8 {
+                        let tx = tx.clone();
+                        rt::spawn(async move {
+                            let _ = tx.send(Instruction::Slot(slot)).await;
+                        });
+                        self.send_json(ctx, &WsServerMessage::Slot(slot));
+                    }
+                }
+                WsClientMessage::GetSlot => {
+                    let tx = tx.clone();
+                    ctx.spawn(async move {
+                        let (resp_tx, mut resp_rx) = mpsc::channel::<u8>(1);
+                        if tx.send(Instruction::GetSlot(resp_tx)).await.is_ok() {
+                            if let Some(slot) = resp_rx.recv().await {
+                                return Some(WsServerMessage::Slot(slot));
+                            }
+                        }
+                        None
+                    }.into_actor(self).map(|msg, _act, ctx| {
+                        if let Some(msg) = msg {
+                            if let Ok(json) = serde_json::to_string(&msg) {
+                                ctx.text(json);
+                            }
+                        }
+                    }));
+                }
+                WsClientMessage::GetMessages => {
+                    let messages = self.messages.clone();
+                    ctx.spawn(async move {
+                        let msgs = messages.lock().await;
+                        let messages_vec: Vec<String> = msgs.iter().rev().cloned().collect();
+                        WsServerMessage::Messages(messages_vec)
+                    }.into_actor(self).map(|msg, _act, ctx| {
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            ctx.text(json);
+                        }
+                    }));
+                }
+            }
+        } else {
+            self.send_json(ctx, &WsServerMessage::Result {
+                success: false,
+                message: "invalid message format".into(),
+            });
+        }
+    }
+}
+
+impl actix::Actor for WsSession {
+    type Context = ws::WebsocketContext<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        self.heartbeat(ctx);
+
+        // Subscribe to broadcast messages for real-time updates
+        let mut rx = self.broadcaster.tx.subscribe();
+        let addr = ctx.address();
+        self.broadcast_task = Some(tokio::spawn(async move {
+            while let Ok(msg) = rx.recv().await {
+                if let Ok(json) = serde_json::to_string(&msg) {
+                    addr.do_send(WsBroadcast(json));
+                }
+            }
+        }));
+    }
+
+    fn stopped(&mut self, _ctx: &mut Self::Context) {
+        if let Some(task) = self.broadcast_task.take() {
+            task.abort();
+        }
+    }
+}
+
+// Message type for receiving broadcasts
+#[derive(actix::Message)]
+#[rtype(result = "()")]
+struct WsBroadcast(String);
+
+impl actix::Handler<WsBroadcast> for WsSession {
+    type Result = ();
+    fn handle(&mut self, msg: WsBroadcast, ctx: &mut Self::Context) {
+        ctx.text(msg.0);
+    }
+}
+
+impl actix::StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
+    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+        match msg {
+            Ok(ws::Message::Ping(msg)) => {
+                self.hb = Instant::now();
+                ctx.pong(&msg);
+            }
+            Ok(ws::Message::Pong(_)) => {
+                self.hb = Instant::now();
+            }
+            Ok(ws::Message::Text(text)) => {
+                self.handle_message(&text, ctx);
+            }
+            Ok(ws::Message::Close(reason)) => {
+                ctx.close(reason);
+                ctx.stop();
+            }
+            _ => {}
+        }
+    }
+}
+
+// WebSocket endpoint
+#[get("/ws")]
+pub async fn ws_handler(
+    req: HttpRequest,
+    stream: web::Payload,
+    instruction_tx: web::Data<Arc<Sender<Instruction>>>,
+    message_log: web::Data<MessageLog>,
+    broadcaster: web::Data<Arc<Broadcaster>>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let session = WsSession::new(
+        instruction_tx.get_ref().clone(),
+        message_log.messages.clone(),
+        broadcaster.get_ref().clone(),
+    );
+    ws::start(session, &req, stream)
+}
 
 pub struct MessageLog {
     pub messages: Arc<Mutex<FifoBuffer<1000, String>>>,
@@ -405,25 +716,10 @@ const HTML: &str = r#"<!DOCTYPE html>
         const messagesEl = document.getElementById('messages');
         const inputEl = document.getElementById('chatInput');
         const toast = document.getElementById('toast');
-        let lastMessageCount = 0;
-        let adFilters = [];
-
-        async function loadFilters() {
-            try {
-                const res = await fetch('https://raw.githubusercontent.com/AfkaraLP/no-coral-ad/main/base.txt');
-                const text = await res.text();
-                adFilters = text.split('\n').map(s => s.trim()).filter(s => s);
-            } catch (e) {
-                console.error('Failed to load filters');
-            }
-        }
-
-        function isFiltered(msg) {
-            return adFilters.some(filter => msg.includes(filter));
-        }
-
-        loadFilters();
-        setInterval(loadFilters, 60000);
+        let allMessages = [];
+        let ws = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 10;
 
         function showToast(message, type = 'info') {
             toast.textContent = message;
@@ -437,32 +733,15 @@ const HTML: &str = r#"<!DOCTYPE html>
             return div.innerHTML;
         }
 
-        async function loadMessages() {
-            try {
-                const res = await fetch('/messages');
-                const text = await res.text();
-                const messages = text.split('\n').filter(m => m.trim());
-
-                if (messages.length !== lastMessageCount) {
-                    lastMessageCount = messages.length;
-                    renderMessages(messages);
-                }
-            } catch (e) {
-                // Silently fail
-            }
-        }
-
         function renderMessages(messages) {
-            const filtered = messages.filter(msg => !isFiltered(msg));
-
-            if (filtered.length === 0) {
+            if (messages.length === 0) {
                 messagesEl.innerHTML = '<div class="messages-empty"><span>No messages yet</span></div>';
                 return;
             }
 
             const wasAtBottom = messagesEl.scrollHeight - messagesEl.scrollTop <= messagesEl.clientHeight + 50;
 
-            messagesEl.innerHTML = filtered.slice().reverse().map(msg =>
+            messagesEl.innerHTML = messages.map(msg =>
                 `<div class="message message-received"><div class="message-bubble">${msg}</div></div>`
             ).join('');
 
@@ -471,87 +750,16 @@ const HTML: &str = r#"<!DOCTYPE html>
             }
         }
 
-        async function sendChat() {
-            const msg = inputEl.value.trim();
-            if (!msg) return;
+        function updatePlayers(players) {
+            document.getElementById('playerCount').textContent = players.length;
+            const list = document.getElementById('playersList');
 
-            inputEl.value = '';
-
-            try {
-                const res = await fetch('/chat', { method: 'POST', body: msg });
-                const result = await res.text();
-                if (result.includes('success')) {
-                    setTimeout(loadMessages, 500);
-                } else {
-                    showToast('Failed to send', 'error');
-                }
-            } catch (e) {
-                showToast('Error: ' + e.message, 'error');
-            }
-        }
-
-        async function getTab() {
-            try {
-                const res = await fetch('/tab', { method: 'POST' });
-                const text = await res.text();
-                const players = text.split('\n').filter(p => p.trim());
-
-                document.getElementById('playerCount').textContent = players.length;
-                const list = document.getElementById('playersList');
-
-                if (players.length === 0 || text.includes('failed')) {
-                    list.innerHTML = '<div class="player-item" style="color: var(--text-muted);">No players online</div>';
-                } else {
-                    list.innerHTML = players.map(p => `
-                        <div class="player-item">${escapeHtml(p)}</div>
-                    `).join('');
-                }
-            } catch (e) {
-                // Silently fail
-            }
-        }
-
-        async function sendJump() {
-            try {
-                const res = await fetch('/jump', { method: 'POST' });
-                const result = await res.text();
-                if (!result.includes('success')) {
-                    showToast('Failed', 'error');
-                }
-            } catch (e) {
-                showToast('Error: ' + e.message, 'error');
-            }
-        }
-
-        let sneaking = false;
-        async function toggleSneak() {
-            sneaking = !sneaking;
-            const btn = document.getElementById('sneakBtn');
-            btn.textContent = 'Sneak: ' + (sneaking ? 'ON' : 'OFF');
-            try {
-                const res = await fetch('/sneak/' + (sneaking ? 'on' : 'off'), { method: 'POST' });
-                const result = await res.text();
-                if (!result.includes('success')) {
-                    showToast('Failed', 'error');
-                }
-            } catch (e) {
-                showToast('Error: ' + e.message, 'error');
-            }
-        }
-
-        let currentSlot = 0;
-        async function selectSlot(slot) {
-            try {
-                const res = await fetch('/slot/' + slot, { method: 'POST' });
-                const result = await res.text();
-                if (result.includes('success')) {
-                    updateSlotUI(slot);
-                    currentSlot = slot;
-                } else {
-                    showToast('Failed', 'error');
-                }
-            } catch (e) {
-                showToast('Error: ' + e.message, 'error');
+            if (players.length === 0) {
+                list.innerHTML = '<div class="player-item" style="color: var(--stone);">No players online</div>';
+            } else {
+                list.innerHTML = players.map(p => `
+                    <div class="player-item">${escapeHtml(p)}</div>
+                `).join('');
             }
         }
 
@@ -561,17 +769,113 @@ const HTML: &str = r#"<!DOCTYPE html>
             });
         }
 
-        async function getCurrentSlot() {
-            try {
-                const res = await fetch('/slot');
-                const slot = parseInt(await res.text());
-                if (!isNaN(slot)) {
-                    currentSlot = slot;
-                    updateSlotUI(slot);
+        // WebSocket connection
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            ws = new WebSocket(wsUrl);
+            updateConnectionStatus('connecting');
+
+            ws.onopen = () => {
+                reconnectAttempts = 0;
+                updateConnectionStatus('connected');
+                // Request initial data
+                wsSend({ type: 'getMessages' });
+                wsSend({ type: 'tab' });
+                wsSend({ type: 'getSlot' });
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleServerMessage(msg);
+                } catch (e) {
+                    console.error('Failed to parse message:', e);
                 }
-            } catch (e) {
-                // Silently fail
+            };
+
+            ws.onclose = () => {
+                updateConnectionStatus('disconnected');
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    const delay = Math.min(500 * reconnectAttempts, 3000);
+                    setTimeout(connectWebSocket, delay);
+                } else {
+                    showToast('Connection lost', 'error');
+                }
+            };
+
+            ws.onerror = () => {};
+        }
+
+        function updateConnectionStatus(status) {
+            const subtitle = document.querySelector('.chat-subtitle');
+            if (status === 'connected') {
+                subtitle.textContent = 'wind.coralmc.it';
+                subtitle.style.color = 'var(--emerald)';
+            } else if (status === 'connecting') {
+                subtitle.textContent = 'Connecting...';
+                subtitle.style.color = 'var(--gold)';
+            } else {
+                subtitle.textContent = 'Reconnecting...';
+                subtitle.style.color = 'var(--redstone)';
             }
+        }
+
+        function wsSend(data) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(data));
+            }
+        }
+
+        function handleServerMessage(msg) {
+            switch (msg.type) {
+                case 'messages':
+                    allMessages = msg.data;
+                    renderMessages(allMessages);
+                    break;
+                case 'newMessage':
+                    allMessages.push(msg.data);
+                    if (allMessages.length > 1000) {
+                        allMessages.shift();
+                    }
+                    renderMessages(allMessages);
+                    break;
+                case 'players':
+                    updatePlayers(msg.data);
+                    break;
+                case 'slot':
+                    updateSlotUI(msg.data);
+                    break;
+                case 'result':
+                    if (!msg.data.success) {
+                        showToast(msg.data.message || 'Failed', 'error');
+                    }
+                    break;
+            }
+        }
+
+        function sendChat() {
+            const msg = inputEl.value.trim();
+            if (!msg) return;
+            inputEl.value = '';
+            wsSend({ type: 'chat', data: msg });
+        }
+
+        function sendJump() {
+            wsSend({ type: 'jump' });
+        }
+
+        let sneaking = false;
+        function toggleSneak() {
+            sneaking = !sneaking;
+            const btn = document.getElementById('sneakBtn');
+            btn.textContent = 'Sneak: ' + (sneaking ? 'ON' : 'OFF');
+            wsSend({ type: 'sneak', data: sneaking });
+        }
+
+        function selectSlot(slot) {
+            wsSend({ type: 'slot', data: slot });
         }
 
         inputEl.addEventListener('keypress', (e) => {
@@ -584,12 +888,8 @@ const HTML: &str = r#"<!DOCTYPE html>
         // WASD Movement Controls
         const activeKeys = new Set();
 
-        async function sendWalk(direction) {
-            try {
-                await fetch('/walk/' + direction, { method: 'POST' });
-            } catch (e) {
-                // Silently fail
-            }
+        function sendWalk(direction) {
+            wsSend({ type: 'walk', data: direction });
         }
 
         function updateMovement() {
@@ -629,12 +929,11 @@ const HTML: &str = r#"<!DOCTYPE html>
             }
         });
 
-        // Initial load and auto-refresh
-        loadMessages();
-        getTab();
-        getCurrentSlot();
-        setInterval(loadMessages, 500);
-        setInterval(getTab, 5000);
+        // Periodically refresh player list
+        setInterval(() => wsSend({ type: 'tab' }), 10000);
+
+        // Initialize WebSocket connection
+        connectWebSocket();
     </script>
 </body>
 </html>
