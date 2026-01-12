@@ -88,10 +88,16 @@ async fn main() -> AppExit {
         .set_handler(handle)
         .set_state(state)
         .reconnect_after(Duration::from_secs(60))
-        .start(account, "wind.coralmc.it")
-        .await;
+        .start(account, "wind.coralmc.it");
 
-    shutdown_signal().await;
+    tokio::select! {
+        _ = shutdown_signal() => {
+            eprintln("shutting down...");
+        }
+        _ = client => {
+            eprintln("client exited...");
+        }
+    }
 
     server.abort();
     AppExit::Success

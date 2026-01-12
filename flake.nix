@@ -40,7 +40,7 @@
           combine (
             with toolchainOf {
               channel = "nightly";
-              sha256 = "sha256-xJcQgGnbraFO5NipYwkHR+V1BxGbTe1ZrRnNw5InBEg=";
+              sha256 = "sha256-3wyHtiyrSbCCICRpquEN1njXpwNodxvudoaEe78hWBQ=";
             };
             [
               clippy
