@@ -78,7 +78,6 @@ async fn main() -> AppExit {
         )
         .expect("failed instantiating db");
 
-    // Create broadcaster for WebSocket message distribution (shared between server and bot)
     let broadcaster = Arc::new(Broadcaster::new());
     let broadcaster_server = broadcaster.clone();
 
