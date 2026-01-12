@@ -463,7 +463,7 @@ const HTML: &str = r#"<!DOCTYPE html>
             const wasAtBottom = messagesEl.scrollHeight - messagesEl.scrollTop <= messagesEl.clientHeight + 50;
 
             messagesEl.innerHTML = filtered.slice().reverse().map(msg =>
-                `<div class="message message-received"><div class="message-bubble">${escapeHtml(msg)}</div></div>`
+                `<div class="message message-received"><div class="message-bubble">${msg}</div></div>`
             ).join('');
 
             if (wasAtBottom) {
