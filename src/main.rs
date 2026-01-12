@@ -92,10 +92,10 @@ async fn main() -> AppExit {
 
     tokio::select! {
         _ = shutdown_signal() => {
-            eprintln("shutting down...");
+            eprintln!("shutting down...");
         }
         _ = client => {
-            eprintln("client exited...");
+            eprintln!("client exited...");
         }
     }
 
