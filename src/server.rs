@@ -1,4 +1,5 @@
 use actix_web::{HttpResponse, Responder, get, post, web};
+use azalea::WalkDirection;
 use std::sync::Arc;
 use tokio::sync::{
     Mutex,
@@ -85,6 +86,10 @@ const HTML: &str = r#"<!DOCTYPE html>
         }
         .mc-btn-green:hover {
             background: linear-gradient(180deg, #7DBB67 0%, #5D9B47 50%, #4A8039 50%, #3E6B2F 100%);
+        }
+        .mc-btn-selected {
+            background: linear-gradient(180deg, #4AEDD9 0%, #3DBDB2 50%, #2A9D93 50%, #1A7D73 100%);
+            border-color: #7FFFFF #1A7D73 #1A7D73 #7FFFFF;
         }
 
         /* Sidebar */
@@ -341,6 +346,21 @@ const HTML: &str = r#"<!DOCTYPE html>
             <div class="control-section">
                 <div class="control-label">Bot Actions</div>
                 <button class="mc-btn" onclick="sendJump()">Jump</button>
+                <button class="mc-btn" id="sneakBtn" onclick="toggleSneak()">Sneak: OFF</button>
+            </div>
+            <div class="control-section">
+                <div class="control-label">Hotbar Slot</div>
+                <div style="display:flex;gap:2px;">
+                    <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(0)">1</button>
+                    <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(1)">2</button>
+                    <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(2)">3</button>
+                    <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(3)">4</button>
+                    <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(4)">5</button>
+                    <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(5)">6</button>
+                    <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(6)">7</button>
+                    <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(7)">8</button>
+                    <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(8)">9</button>
+                </div>
             </div>
         </div>
 
@@ -461,7 +481,6 @@ const HTML: &str = r#"<!DOCTYPE html>
                 const res = await fetch('/chat', { method: 'POST', body: msg });
                 const result = await res.text();
                 if (result.includes('success')) {
-                    showToast('Message sent', 'success');
                     setTimeout(loadMessages, 500);
                 } else {
                     showToast('Failed to send', 'error');
@@ -496,13 +515,62 @@ const HTML: &str = r#"<!DOCTYPE html>
             try {
                 const res = await fetch('/jump', { method: 'POST' });
                 const result = await res.text();
+                if (!result.includes('success')) {
+                    showToast('Failed', 'error');
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message, 'error');
+            }
+        }
+
+        let sneaking = false;
+        async function toggleSneak() {
+            sneaking = !sneaking;
+            const btn = document.getElementById('sneakBtn');
+            btn.textContent = 'Sneak: ' + (sneaking ? 'ON' : 'OFF');
+            try {
+                const res = await fetch('/sneak/' + (sneaking ? 'on' : 'off'), { method: 'POST' });
+                const result = await res.text();
+                if (!result.includes('success')) {
+                    showToast('Failed', 'error');
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message, 'error');
+            }
+        }
+
+        let currentSlot = 0;
+        async function selectSlot(slot) {
+            try {
+                const res = await fetch('/slot/' + slot, { method: 'POST' });
+                const result = await res.text();
                 if (result.includes('success')) {
-                    showToast('Jump!', 'success');
+                    updateSlotUI(slot);
+                    currentSlot = slot;
                 } else {
                     showToast('Failed', 'error');
                 }
             } catch (e) {
                 showToast('Error: ' + e.message, 'error');
+            }
+        }
+
+        function updateSlotUI(slot) {
+            document.querySelectorAll('.slot-btn').forEach((btn, i) => {
+                btn.classList.toggle('mc-btn-selected', i === slot);
+            });
+        }
+
+        async function getCurrentSlot() {
+            try {
+                const res = await fetch('/slot');
+                const slot = parseInt(await res.text());
+                if (!isNaN(slot)) {
+                    currentSlot = slot;
+                    updateSlotUI(slot);
+                }
+            } catch (e) {
+                // Silently fail
             }
         }
 
@@ -513,9 +581,58 @@ const HTML: &str = r#"<!DOCTYPE html>
             }
         });
 
+        // WASD Movement Controls
+        const activeKeys = new Set();
+
+        async function sendWalk(direction) {
+            try {
+                await fetch('/walk/' + direction, { method: 'POST' });
+            } catch (e) {
+                // Silently fail
+            }
+        }
+
+        function updateMovement() {
+            const w = activeKeys.has('w');
+            const a = activeKeys.has('a');
+            const s = activeKeys.has('s');
+            const d = activeKeys.has('d');
+
+            let direction = 'stop';
+            if (w && d) direction = 'forward-left';
+            else if (w && a) direction = 'forward-right';
+            else if (s && d) direction = 'backward-left';
+            else if (s && a) direction = 'backward-right';
+            else if (w) direction = 'forward';
+            else if (s) direction = 'backward';
+            else if (d) direction = 'left';
+            else if (a) direction = 'right';
+
+            sendWalk(direction);
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (document.activeElement === inputEl) return;
+
+            const key = e.key.toLowerCase();
+            if (['w', 'a', 's', 'd'].includes(key) && !activeKeys.has(key)) {
+                activeKeys.add(key);
+                updateMovement();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (['w', 'a', 's', 'd'].includes(key)) {
+                activeKeys.delete(key);
+                updateMovement();
+            }
+        });
+
         // Initial load and auto-refresh
         loadMessages();
         getTab();
+        getCurrentSlot();
         setInterval(loadMessages, 500);
         setInterval(getTab, 5000);
     </script>
@@ -568,4 +685,70 @@ pub async fn bot_messages(data: web::Data<MessageLog>) -> impl Responder {
         .iter()
         .map(|msg| format!("{msg}\n"))
         .collect::<String>()
+}
+
+#[post("/walk/{direction}")]
+pub async fn bot_walk(
+    path: web::Path<String>,
+    data: web::Data<Arc<Sender<Instruction>>>,
+) -> impl Responder {
+    let direction = match path.as_str() {
+        "forward" => WalkDirection::Forward,
+        "backward" => WalkDirection::Backward,
+        "left" => WalkDirection::Left,
+        "right" => WalkDirection::Right,
+        "forward-left" => WalkDirection::ForwardLeft,
+        "forward-right" => WalkDirection::ForwardRight,
+        "backward-left" => WalkDirection::BackwardLeft,
+        "backward-right" => WalkDirection::BackwardRight,
+        "stop" => WalkDirection::None,
+        _ => return "invalid direction",
+    };
+    match data.send(Instruction::Walk(direction)).await {
+        Ok(_) => "successfully sent instruction",
+        Err(_) => "failed",
+    }
+}
+
+#[post("/sneak/{state}")]
+pub async fn bot_sneak(
+    path: web::Path<String>,
+    data: web::Data<Arc<Sender<Instruction>>>,
+) -> impl Responder {
+    let sneaking = match path.as_str() {
+        "on" => true,
+        "off" => false,
+        _ => return "invalid state",
+    };
+    match data.send(Instruction::Sneak(sneaking)).await {
+        Ok(_) => "successfully sent instruction",
+        Err(_) => "failed",
+    }
+}
+
+#[post("/slot/{slot}")]
+pub async fn bot_slot(
+    path: web::Path<u8>,
+    data: web::Data<Arc<Sender<Instruction>>>,
+) -> impl Responder {
+    let slot = path.into_inner();
+    if slot > 8 {
+        return "invalid slot (0-8)".to_string();
+    }
+    match data.send(Instruction::Slot(slot)).await {
+        Ok(_) => "successfully sent instruction".to_string(),
+        Err(_) => "failed".to_string(),
+    }
+}
+
+#[get("/slot")]
+pub async fn bot_get_slot(data: web::Data<Arc<Sender<Instruction>>>) -> impl Responder {
+    let (tx, mut rx) = mpsc::channel::<u8>(1);
+    match data.send(Instruction::GetSlot(tx)).await {
+        Ok(_) => match rx.recv().await {
+            Some(slot) => slot.to_string(),
+            None => "failed".to_string(),
+        },
+        Err(_) => "failed".to_string(),
+    }
 }

@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use azalea::{
     prelude::*, protocol::packets::game::ServerboundGamePacket, registry::builtin::ItemKind,
+    WalkDirection,
 };
 use tokio::{sync::mpsc::Sender, time};
 
@@ -17,6 +18,10 @@ pub enum Instruction {
     #[default]
     Jump,
     TabList(Sender<String>),
+    Walk(WalkDirection),
+    Sneak(bool),
+    Slot(u8),
+    GetSlot(Sender<u8>),
 }
 
 #[derive(Default, Clone, Component, PartialEq, Eq, PartialOrd, Ord)]
@@ -93,6 +98,12 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                             Ok(_) => eprintln!("successfully sent tablist..."),
                             Err(_) => eprintln!("failed to send tablist..."),
                         }
+                    }
+                    Instruction::Walk(direction) => bot.walk(direction),
+                    Instruction::Sneak(sneaking) => bot.set_crouching(sneaking),
+                    Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
+                    Instruction::GetSlot(sender) => {
+                        let _ = sender.send(bot.selected_hotbar_slot()).await;
                     }
                 }
             }

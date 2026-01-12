@@ -16,7 +16,7 @@ use crate::buffer::FifoBuffer;
 use crate::server::{MessageLog, bot_messages};
 use crate::{
     bot::{BotLocation, Instruction, handle},
-    server::{bot_chat, bot_jump, bot_tab, index},
+    server::{bot_chat, bot_get_slot, bot_jump, bot_slot, bot_sneak, bot_tab, bot_walk, index},
 };
 
 mod bot;
@@ -90,6 +90,10 @@ async fn main() -> AppExit {
                 .service(bot_chat)
                 .service(bot_tab)
                 .service(bot_jump)
+                .service(bot_walk)
+                .service(bot_sneak)
+                .service(bot_slot)
+                .service(bot_get_slot)
                 .service(bot_messages)
         })
         .bind(("127.0.0.1", PORT))
