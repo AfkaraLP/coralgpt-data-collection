@@ -36,7 +36,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
     match event {
         Event::Spawn => {
             tokio::spawn(async move {
-                let mut interval = time::interval(Duration::from_secs(1));
+                let mut interval = time::interval(Duration::from_secs(5));
                 let state = Arc::new(state);
                 let bot = Arc::new(bot);
 
@@ -120,6 +120,7 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
             *going_to_bedwars = true;
         });
         bot.set_selected_hotbar_slot(4);
+        tokio::time::sleep(Duration::from_millis(1000)).await;
         bot.wait_updates(1).await;
 
         eprintln!("opening lobby selector...");
@@ -131,6 +132,7 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
                 x_rot: 0.0,
             },
         ));
+        tokio::time::sleep(Duration::from_millis(1000)).await;
         bot.wait_updates(1).await;
         if let Some(container) = bot.wait_for_container_open(Some(400)).await
             && let Some(slots) = container.slots()
@@ -143,7 +145,7 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
             else {
                 return eprintln!("couldn't get the bed idx");
             };
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(1000)).await;
             container.left_click(bed_idx);
             bot.set_selected_hotbar_slot(3);
         } else {
