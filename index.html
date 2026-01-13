@@ -333,6 +333,7 @@
                 <div class="control-label">Bot Actions</div>
                 <button class="mc-btn" onclick="sendJump()">Jump</button>
                 <button class="mc-btn" id="sneakBtn" onclick="toggleSneak()">Sneak: OFF</button>
+                <button class="mc-btn" onclick="toggleBlocklist()">Blocklist: ON</button>
             </div>
             <div class="control-section">
                 <div class="control-label">Hotbar Slot</div>
@@ -388,6 +389,9 @@
     <div class="toast" id="toast"></div>
 
     <script>
+        let blocklist = [];
+        let blocklistEnabled = true;
+
         const messagesEl = document.getElementById('messages');
         const inputEl = document.getElementById('chatInput');
         const toast = document.getElementById('toast');
@@ -395,6 +399,34 @@
         let ws = null;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 10;
+        const BLOCKLIST_URL = 'https://raw.githubusercontent.com/AfkaraLP/no-coral-ad/refs/heads/main/base.txt';
+
+        async function loadBlocklist() {
+            try {
+                const res = await fetch(BLOCKLIST_URL);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const text = await res.text();
+                blocklist = text
+                    .split('\n')
+                    .map(l => l.trim())
+                    .filter(l => l.length > 0 && !l.startsWith('#'));
+                console.log('Blocklist loaded:', blocklist.length, 'entries');
+            } catch (e) {
+                console.error('Failed to load blocklist:', e);
+                blocklist = [];
+            }
+        }
+
+        function isBlocked(message) {
+            if (!blocklistEnabled) return false;
+            const lower = message.toLowerCase();
+            for (const word of blocklist) {
+                if (lower.includes(word.toLowerCase())) {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         function showToast(message, type = 'info') {
             toast.textContent = message;
@@ -409,14 +441,16 @@
         }
 
         function renderMessages(messages) {
-            if (messages.length === 0) {
+            const filtered = messages.filter(msg => !isBlocked(msg));
+
+            if (filtered.length === 0) {
                 messagesEl.innerHTML = '<div class="messages-empty"><span>No messages yet</span></div>';
                 return;
             }
 
             const wasAtBottom = messagesEl.scrollHeight - messagesEl.scrollTop <= messagesEl.clientHeight + 50;
 
-            messagesEl.innerHTML = messages.map(msg =>
+            messagesEl.innerHTML = filtered.map(msg =>
                 `<div class="message message-received"><div class="message-bubble">${msg}</div></div>`
             ).join('');
 
@@ -424,6 +458,7 @@
                 messagesEl.scrollTop = messagesEl.scrollHeight;
             }
         }
+
 
         function updatePlayers(players) {
             document.getElementById('playerCount').textContent = players.length;
@@ -552,6 +587,13 @@
             wsSend({ type: 'slot', data: slot });
         }
 
+        function toggleBlocklist() {
+            blocklistEnabled = !blocklistEnabled;
+            const btn = event.target;
+            btn.textContent = 'Blocklist: ' + (blocklistEnabled ? 'ON' : 'OFF');
+            renderMessages(allMessages);
+        }
+
         inputEl.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -608,6 +650,8 @@
 
         // Initialize WebSocket connection
         connectWebSocket();
+
+        loadBlocklist();
     </script>
 </body>
 </html>
