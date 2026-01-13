@@ -84,21 +84,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                 match instruction {
                     Instruction::Chat(message) => bot.chat(message),
                     Instruction::Jump => bot.jump(),
-                    Instruction::TabList(sender) => {
-                        let mut players = String::new();
-                        eprintln!("tablist:");
-                        for (_, player) in bot.tab_list().into_iter() {
-                            eprintln!("{}", player.display_name.clone().unwrap_or_default());
-                            players.push_str(&format!(
-                                "{}\n",
-                                player.display_name.unwrap_or_default()
-                            ));
-                        }
-                        match sender.send(players).await {
-                            Ok(_) => eprintln!("successfully sent tablist..."),
-                            Err(_) => eprintln!("failed to send tablist..."),
-                        }
-                    }
+                    Instruction::TabList(sender) => send_tab_list(&bot, sender).await,
                     Instruction::Walk(direction) => bot.walk(direction),
                     Instruction::Sneak(sneaking) => bot.set_crouching(sneaking),
                     Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
@@ -112,6 +98,17 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
     }
 
     Ok(())
+}
+
+async fn send_tab_list(bot: &Client, sender: Sender<String>) {
+    let mut players = String::new();
+    for (_, player) in bot.tab_list().into_iter() {
+        players.push_str(&format!("{}\n", player.display_name.unwrap_or_default()));
+    }
+    match sender.send(players).await {
+        Ok(_) => eprintln!("successfully sent tablist..."),
+        Err(_) => eprintln!("failed to send tablist..."),
+    }
 }
 
 async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
@@ -135,7 +132,6 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
             },
         ));
         bot.wait_updates(1).await;
-        // eprintln!("held item: {:#?}", bot.get_held_item());
         if let Some(container) = bot.wait_for_container_open(Some(400)).await
             && let Some(slots) = container.slots()
         {
@@ -168,7 +164,6 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         let mut messages = state.messages.lock().await;
         messages.push(html_message.clone());
     }
-    // Broadcast new message to all connected WebSocket clients
     if let Some(ref broadcaster) = state.broadcaster {
         broadcaster.send(WsServerMessage::NewMessage(html_message));
     }

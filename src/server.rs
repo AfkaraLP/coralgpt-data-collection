@@ -12,7 +12,6 @@ use tokio::sync::{
 
 use crate::{bot::Instruction, buffer::FifoBuffer};
 
-// WebSocket heartbeat interval
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -74,7 +73,7 @@ impl Broadcaster {
 }
 
 pub struct WsSession {
-    hb: Instant,
+    heartbeat: Instant,
     instruction_tx: Arc<Sender<Instruction>>,
     messages: Arc<Mutex<FifoBuffer<1000, String>>>,
     broadcaster: Arc<Broadcaster>,
@@ -88,7 +87,7 @@ impl WsSession {
         broadcaster: Arc<Broadcaster>,
     ) -> Self {
         Self {
-            hb: Instant::now(),
+            heartbeat: Instant::now(),
             instruction_tx,
             messages,
             broadcaster,
@@ -98,7 +97,7 @@ impl WsSession {
 
     fn heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
-            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
+            if Instant::now().duration_since(act.heartbeat) > CLIENT_TIMEOUT {
                 ctx.stop();
                 return;
             }
@@ -274,7 +273,6 @@ impl actix::Actor for WsSession {
     fn started(&mut self, ctx: &mut Self::Context) {
         self.heartbeat(ctx);
 
-        // Subscribe to broadcast messages for real-time updates
         let mut rx = self.broadcaster.tx.subscribe();
         let addr = ctx.address();
         self.broadcast_task = Some(tokio::spawn(async move {
@@ -293,7 +291,6 @@ impl actix::Actor for WsSession {
     }
 }
 
-// Message type for receiving broadcasts
 #[derive(actix::Message)]
 #[rtype(result = "()")]
 struct WsBroadcast(String);
@@ -309,11 +306,11 @@ impl actix::StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession 
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
             Ok(ws::Message::Ping(msg)) => {
-                self.hb = Instant::now();
+                self.heartbeat = Instant::now();
                 ctx.pong(&msg);
             }
             Ok(ws::Message::Pong(_)) => {
-                self.hb = Instant::now();
+                self.heartbeat = Instant::now();
             }
             Ok(ws::Message::Text(text)) => {
                 self.handle_message(&text, ctx);
@@ -347,7 +344,7 @@ pub struct MessageLog {
     pub messages: Arc<Mutex<FifoBuffer<1000, String>>>,
 }
 
-const HTML: &str = include_str!(".././index.html");
+const HTML: &str = include_str!("../index.html");
 
 #[get("/")]
 pub async fn index() -> impl Responder {

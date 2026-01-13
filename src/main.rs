@@ -57,15 +57,10 @@ impl State {
     }
 }
 
-#[tokio::main]
-async fn main() -> AppExit {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Instruction>(10);
-    let tx = Arc::new(tx);
-    let connection = rusqlite::Connection::open("chat_log.db").expect("could not open db");
-    let messages: Arc<Mutex<FifoBuffer<1000, String>>> = Arc::new(Mutex::new(FifoBuffer::new()));
-    connection
-        .execute(
-            "CREATE TABLE IF NOT EXISTS messages (
+pub fn instantiate_db(path: &str) -> rusqlite::Result<rusqlite::Connection> {
+    let connection = rusqlite::Connection::open(path)?;
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL,
         timestamp TEXT DEFAULT (datetime('now')),
@@ -74,9 +69,17 @@ async fn main() -> AppExit {
         message TEXT NOT NULL,
         ping INTEGER
     );",
-            [],
-        )
-        .expect("failed instantiating db");
+        [],
+    )?;
+    Ok(connection)
+}
+
+#[tokio::main]
+async fn main() -> AppExit {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Instruction>(10);
+    let tx = Arc::new(tx);
+    let messages: Arc<Mutex<FifoBuffer<1000, String>>> = Arc::new(Mutex::new(FifoBuffer::new()));
+    let connection = instantiate_db("chat_log.db").expect("failed starting db");
 
     let broadcaster = Arc::new(Broadcaster::new());
     let broadcaster_server = broadcaster.clone();
