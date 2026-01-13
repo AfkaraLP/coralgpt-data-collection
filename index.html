@@ -433,7 +433,7 @@
                 list.innerHTML = '<div class="player-item" style="color: var(--stone);">No players online</div>';
             } else {
                 list.innerHTML = players.map(p => `
-                    <div class="player-item">${escapeHtml(p)}</div>
+                    <div class="player-item">${p}</div>
                 `).join('');
             }
         }

@@ -103,7 +103,10 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
 async fn send_tab_list(bot: &Client, sender: Sender<String>) {
     let mut players = String::new();
     for (_, player) in bot.tab_list().into_iter() {
-        players.push_str(&format!("{}\n", player.display_name.unwrap_or_default()));
+        players.push_str(&format!(
+            "{}\n",
+            player.display_name.unwrap_or_default().to_html()
+        ));
     }
     match sender.send(players).await {
         Ok(_) => eprintln!("successfully sent tablist..."),
