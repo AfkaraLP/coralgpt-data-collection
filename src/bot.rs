@@ -1,5 +1,5 @@
 use std::fmt::Write;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use azalea::{
     WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
@@ -34,22 +34,40 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
         Event::Spawn => {
             tokio::spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(5));
-                let state = Arc::new(state);
 
                 loop {
                     interval.tick().await;
-                    let state = state.clone();
                     let is_in_bedwars_lobby = {
                         let location = state.location.lock().await;
                         location.eq(&BotLocation::BedwarsLobby)
                     };
                     if is_in_bedwars_lobby {
                         tokio::spawn(async move {
-                            bot.walk(azalea::WalkDirection::Backward);
-                            let mut interval = time::interval(Duration::from_secs(10));
+                            let mut interval = time::interval(Duration::from_secs(30));
                             loop {
                                 interval.tick().await;
+                                bot.walk(azalea::WalkDirection::Backward);
                                 bot.jump();
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                bot.walk(WalkDirection::None);
+                                if let Some(inventory) = bot.open_inventory()
+                                    && let Some(slots) = inventory.slots()
+                                {
+                                    if !slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
+                                        && !bot.tab_list().into_iter().any(|entry| {
+                                            entry
+                                                .1
+                                                .display_name
+                                                .unwrap_or_default()
+                                                .to_string()
+                                                .to_lowercase()
+                                                .contains("[CoralProxy]")
+                                        })
+                                    {
+                                        bot.chat("/l");
+                                        join_bedwars_lobby(&bot).await;
+                                    }
+                                }
                             }
                         });
                         break eprintln!("successfully joined the bedwars lobby...");
@@ -58,12 +76,12 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                         && let Some(slots) = inventory.slots()
                         && slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
                     {
-                        {
-                            let mut location = state.location.lock().await;
-                            *location = BotLocation::BedwarsLobby;
-                        }
+                        let mut location = state.location.lock().await;
+                        *location = BotLocation::BedwarsLobby;
                     }
-                    join_bedwars_lobby(&bot, state).await;
+                    if state.location.lock().await.eq(&BotLocation::Lobby) {
+                        join_bedwars_lobby(&bot).await;
+                    }
                 }
             });
         }
@@ -114,43 +132,31 @@ async fn send_tab_list(bot: &Client, sender: Sender<String>) {
     }
 }
 
-async fn join_bedwars_lobby(bot: &Client, state: Arc<State>) {
-    if state.location.lock().await.eq(&BotLocation::Lobby) && !*state.going_to_bedwars.lock().await
-    {
-        let new_state = state.clone();
-        tokio::spawn(async move {
-            let mut going_to_bedwars = new_state.going_to_bedwars.lock().await;
-            *going_to_bedwars = true;
-        });
-        bot.set_selected_hotbar_slot(4);
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-        bot.wait_updates(1).await;
+async fn join_bedwars_lobby(bot: &Client) {
+    bot.set_selected_hotbar_slot(4);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    bot.wait_updates(1).await;
 
-        eprintln!("opening lobby selector...");
-        bot.right_click();
+    eprintln!("opening lobby selector...");
+    bot.right_click();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    bot.wait_updates(1).await;
+    if let Some(container) = bot.wait_for_container_open(Some(400)).await
+        && let Some(slots) = container.slots()
+    {
+        let Some(bed_idx) = slots
+            .iter()
+            .enumerate()
+            .find(|(_idx, item)| item.kind().eq(&ItemKind::RedBed))
+            .map(|v| v.0)
+        else {
+            return eprintln!("couldn't get the bed idx");
+        };
         tokio::time::sleep(Duration::from_millis(1000)).await;
-        bot.wait_updates(1).await;
-        if let Some(container) = bot.wait_for_container_open(Some(400)).await
-            && let Some(slots) = container.slots()
-        {
-            let Some(bed_idx) = slots
-                .iter()
-                .enumerate()
-                .find(|(_idx, item)| item.kind().eq(&ItemKind::RedBed))
-                .map(|v| v.0)
-            else {
-                return eprintln!("couldn't get the bed idx");
-            };
-            tokio::time::sleep(Duration::from_millis(1000)).await;
-            container.left_click(bed_idx);
-            bot.set_selected_hotbar_slot(3);
-        } else {
-            eprintln!("failed to get open container...");
-        }
-        tokio::spawn(async move {
-            let mut going_to_bedwars = state.going_to_bedwars.lock().await;
-            *going_to_bedwars = false;
-        });
+        container.left_click(bed_idx);
+        bot.set_selected_hotbar_slot(3);
+    } else {
+        eprintln!("failed to get open container...");
     }
 }
 

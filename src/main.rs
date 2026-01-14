@@ -31,7 +31,6 @@ pub const PORT: u16 = 6767;
 #[derive(Default, Clone, Component)]
 pub struct State {
     pub location: Arc<Mutex<BotLocation>>,
-    pub going_to_bedwars: Arc<Mutex<bool>>,
     pub recv_instruction: Arc<Mutex<Option<Receiver<Instruction>>>>,
     pub conn: Arc<Mutex<Option<rusqlite::Connection>>>,
     pub messages: Arc<Mutex<FifoBuffer<1000, String>>>,
