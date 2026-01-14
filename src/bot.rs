@@ -170,6 +170,9 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         broadcaster.send(WsServerMessage::NewMessage(html_message));
     }
     let message = message.message().to_string();
+    if message.contains("La partita inizia tra") {
+        bot.chat("/l");
+    }
     if state.location.lock().await.eq(&BotLocation::BedwarsLobby)
         && message.to_lowercase().trim().starts_with('[')
         && let Some(mut message) = Message::parse(&message)
