@@ -1,8 +1,5 @@
 //! A bot that logs chat messages and the number that we've received to the console.
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use actix_web::{App, HttpServer, web};
 use azalea::prelude::*;
 use azalea::{
@@ -10,6 +7,9 @@ use azalea::{
     app::AppExit,
     prelude::{Account, Component},
 };
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::signal;
 use tokio::sync::{Mutex, mpsc::Receiver};
 
 use crate::buffer::FifoBuffer;
@@ -27,8 +27,6 @@ mod server;
 pub const USERNAME: &str = "CoralGPTv0d1";
 pub const PWD: &str = "REDACTED";
 pub const PORT: u16 = 6767;
-
-use tokio::signal;
 
 #[derive(Default, Clone, Component)]
 pub struct State {
@@ -57,27 +55,10 @@ impl State {
     }
 }
 
-pub fn instantiate_db(path: &str) -> rusqlite::Result<rusqlite::Connection> {
-    let connection = rusqlite::Connection::open(path)?;
-    connection.execute(
-        "CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL,
-        timestamp TEXT DEFAULT (datetime('now')),
-        starcount INTEGER DEFAULT 0,
-        rank TEXT NOT NULL,
-        message TEXT NOT NULL,
-        ping INTEGER
-    );",
-        [],
-    )?;
-    Ok(connection)
-}
-
-#[tokio::main]
+#[actix_web::main]
 async fn main() -> AppExit {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Instruction>(10);
-    let tx = Arc::new(tx);
+    let (instruction_sender, instruction_receiver) = tokio::sync::mpsc::channel::<Instruction>(10);
+    let instruction_sender = Arc::new(instruction_sender);
     let messages: Arc<Mutex<FifoBuffer<1000, String>>> = Arc::new(Mutex::new(FifoBuffer::new()));
     let connection = instantiate_db("chat_log.db").expect("failed starting db");
 
@@ -92,7 +73,7 @@ async fn main() -> AppExit {
         HttpServer::new(move || {
             let messages_clone = messages.clone();
             App::new()
-                .app_data(web::Data::new(tx.clone()))
+                .app_data(web::Data::new(instruction_sender.clone()))
                 .app_data(web::Data::new(MessageLog {
                     messages: messages_clone,
                 }))
@@ -115,7 +96,7 @@ async fn main() -> AppExit {
     });
 
     let account = Account::offline(USERNAME);
-    let state = State::new(rx, connection, messages_bot, broadcaster);
+    let state = State::new(instruction_receiver, connection, messages_bot, broadcaster);
 
     let client = ClientBuilder::new()
         .set_handler(handle)
@@ -124,7 +105,7 @@ async fn main() -> AppExit {
         .start(account, "wind.coralmc.it");
 
     tokio::select! {
-        _ = shutdown_signal() => {
+        () = shutdown_signal() => {
             eprintln!("shutting down...");
         }
         _ = client => {
@@ -156,4 +137,24 @@ async fn shutdown_signal() {
 async fn shutdown_signal() {
     signal::ctrl_c().await.expect("failed to listen for Ctrl+C");
     eprintln!("shutting down");
+}
+
+/// # Errors
+///
+/// - shouldn't fail, opens db on path and instantiates it if it doesn't exist
+pub fn instantiate_db(path: &str) -> rusqlite::Result<rusqlite::Connection> {
+    let connection = rusqlite::Connection::open(path)?;
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL,
+        timestamp TEXT DEFAULT (datetime('now')),
+        starcount INTEGER DEFAULT 0,
+        rank TEXT NOT NULL,
+        message TEXT NOT NULL,
+        ping INTEGER
+    );",
+        [],
+    )?;
+    Ok(connection)
 }

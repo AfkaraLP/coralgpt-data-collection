@@ -3,6 +3,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, post, rt, web};
 use actix_web_actors::ws;
 use azalea::WalkDirection;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{
@@ -95,7 +96,7 @@ impl WsSession {
         }
     }
 
-    fn heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
+    fn heartbeat(ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.heartbeat) > CLIENT_TIMEOUT {
                 ctx.stop();
@@ -105,7 +106,7 @@ impl WsSession {
         });
     }
 
-    fn send_json(&self, ctx: &mut ws::WebsocketContext<Self>, msg: &WsServerMessage) {
+    fn send_json(ctx: &mut ws::WebsocketContext<Self>, msg: &WsServerMessage) {
         if let Ok(json) = serde_json::to_string(msg) {
             ctx.text(json);
         }
@@ -117,146 +118,32 @@ impl WsSession {
 
             match client_msg {
                 WsClientMessage::Chat(msg) => {
-                    let tx = tx.clone();
-                    rt::spawn(async move {
-                        let _ = tx.send(Instruction::Chat(msg)).await;
-                    });
-                    self.send_json(
-                        ctx,
-                        &WsServerMessage::Result {
-                            success: true,
-                            message: "sent".into(),
-                        },
-                    );
+                    handle_client_chat(ctx, &tx, msg);
                 }
                 WsClientMessage::Jump => {
-                    let tx = tx.clone();
-                    rt::spawn(async move {
-                        let _ = tx.send(Instruction::Jump).await;
-                    });
-                    self.send_json(
-                        ctx,
-                        &WsServerMessage::Result {
-                            success: true,
-                            message: "jumped".into(),
-                        },
-                    );
+                    handle_client_jump(ctx, &tx);
                 }
                 WsClientMessage::Tab => {
-                    let tx = tx.clone();
-                    ctx.spawn(
-                        async move {
-                            let (resp_tx, mut resp_rx) = mpsc::channel::<String>(1);
-                            if tx.send(Instruction::TabList(resp_tx)).await.is_ok() {
-                                if let Some(tablist) = resp_rx.recv().await {
-                                    let players: Vec<String> = tablist
-                                        .split('\n')
-                                        .filter(|s| !s.is_empty())
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                    return Some(WsServerMessage::Players(players));
-                                }
-                            }
-                            None
-                        }
-                        .into_actor(self)
-                        .map(|msg, _act, ctx| {
-                            if let Some(msg) = msg {
-                                if let Ok(json) = serde_json::to_string(&msg) {
-                                    ctx.text(json);
-                                }
-                            }
-                        }),
-                    );
+                    self.handle_client_tab(ctx, &tx);
                 }
                 WsClientMessage::Walk(direction) => {
-                    let dir = match direction.as_str() {
-                        "forward" => Some(WalkDirection::Forward),
-                        "backward" => Some(WalkDirection::Backward),
-                        "left" => Some(WalkDirection::Left),
-                        "right" => Some(WalkDirection::Right),
-                        "forward-left" => Some(WalkDirection::ForwardLeft),
-                        "forward-right" => Some(WalkDirection::ForwardRight),
-                        "backward-left" => Some(WalkDirection::BackwardLeft),
-                        "backward-right" => Some(WalkDirection::BackwardRight),
-                        "stop" => Some(WalkDirection::None),
-                        _ => None,
-                    };
-                    if let Some(d) = dir {
-                        let tx = tx.clone();
-                        rt::spawn(async move {
-                            let _ = tx.send(Instruction::Walk(d)).await;
-                        });
-                    }
+                    handle_client_walk(&tx, &direction);
                 }
                 WsClientMessage::Sneak(sneaking) => {
-                    let tx = tx.clone();
-                    rt::spawn(async move {
-                        let _ = tx.send(Instruction::Sneak(sneaking)).await;
-                    });
-                    self.send_json(
-                        ctx,
-                        &WsServerMessage::Result {
-                            success: true,
-                            message: if sneaking {
-                                "sneaking"
-                            } else {
-                                "stopped sneaking"
-                            }
-                            .into(),
-                        },
-                    );
+                    handle_client_sneak(ctx, &tx, sneaking);
                 }
                 WsClientMessage::Slot(slot) => {
-                    if slot <= 8 {
-                        let tx = tx.clone();
-                        rt::spawn(async move {
-                            let _ = tx.send(Instruction::Slot(slot)).await;
-                        });
-                        self.send_json(ctx, &WsServerMessage::Slot(slot));
-                    }
+                    handle_client_set_slot(ctx, &tx, slot);
                 }
                 WsClientMessage::GetSlot => {
-                    let tx = tx.clone();
-                    ctx.spawn(
-                        async move {
-                            let (resp_tx, mut resp_rx) = mpsc::channel::<u8>(1);
-                            if tx.send(Instruction::GetSlot(resp_tx)).await.is_ok() {
-                                if let Some(slot) = resp_rx.recv().await {
-                                    return Some(WsServerMessage::Slot(slot));
-                                }
-                            }
-                            None
-                        }
-                        .into_actor(self)
-                        .map(|msg, _act, ctx| {
-                            if let Some(msg) = msg {
-                                if let Ok(json) = serde_json::to_string(&msg) {
-                                    ctx.text(json);
-                                }
-                            }
-                        }),
-                    );
+                    self.handle_client_get_slot(ctx, &tx);
                 }
                 WsClientMessage::GetMessages => {
-                    let messages = self.messages.clone();
-                    ctx.spawn(
-                        async move {
-                            let msgs = messages.lock().await;
-                            let messages_vec: Vec<String> = msgs.iter().rev().cloned().collect();
-                            WsServerMessage::Messages(messages_vec)
-                        }
-                        .into_actor(self)
-                        .map(|msg, _act, ctx| {
-                            if let Ok(json) = serde_json::to_string(&msg) {
-                                ctx.text(json);
-                            }
-                        }),
-                    );
+                    self.handle_client_get_messages(ctx);
                 }
             }
         } else {
-            self.send_json(
+            Self::send_json(
                 ctx,
                 &WsServerMessage::Result {
                     success: false,
@@ -265,13 +152,180 @@ impl WsSession {
             );
         }
     }
+
+    fn handle_client_get_messages(&mut self, ctx: &mut ws::WebsocketContext<WsSession>) {
+        let messages = self.messages.clone();
+        ctx.spawn(
+            async move {
+                let msgs = messages.lock().await;
+                let messages_vec: Vec<String> = msgs.iter().rev().cloned().collect();
+                WsServerMessage::Messages(messages_vec)
+            }
+            .into_actor(self)
+            .map(|msg, _act, ctx| {
+                if let Ok(json) = serde_json::to_string(&msg) {
+                    ctx.text(json);
+                }
+            }),
+        );
+    }
+
+    fn handle_client_get_slot(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<WsSession>,
+        tx: &Sender<Instruction>,
+    ) {
+        let tx = tx.clone();
+        ctx.spawn(
+            async move {
+                let (resp_tx, mut resp_rx) = mpsc::channel::<u8>(1);
+                if tx.send(Instruction::GetSlot(resp_tx)).await.is_ok()
+                    && let Some(slot) = resp_rx.recv().await
+                {
+                    return Some(WsServerMessage::Slot(slot));
+                }
+                None
+            }
+            .into_actor(self)
+            .map(|msg, _act, ctx| {
+                if let Some(msg) = msg
+                    && let Ok(json) = serde_json::to_string(&msg)
+                {
+                    ctx.text(json);
+                }
+            }),
+        );
+    }
+
+    fn handle_client_tab(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<WsSession>,
+        tx: &Arc<Sender<Instruction>>,
+    ) {
+        let tx = tx.clone();
+        ctx.spawn(
+            async move {
+                let (resp_tx, mut resp_rx) = mpsc::channel::<String>(1);
+                if tx.send(Instruction::TabList(resp_tx)).await.is_ok()
+                    && let Some(tablist) = resp_rx.recv().await
+                {
+                    let players: Vec<String> = tablist
+                        .split('\n')
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string)
+                        .collect();
+                    return Some(WsServerMessage::Players(players));
+                }
+
+                None
+            }
+            .into_actor(self)
+            .map(|msg, _act, ctx| {
+                if let Some(msg) = msg
+                    && let Ok(json) = serde_json::to_string(&msg)
+                {
+                    ctx.text(json);
+                }
+            }),
+        );
+    }
+}
+
+fn handle_client_set_slot(
+    ctx: &mut ws::WebsocketContext<WsSession>,
+    tx: &Arc<Sender<Instruction>>,
+    slot: u8,
+) {
+    if slot <= 8 {
+        let tx = tx.clone();
+        rt::spawn(async move {
+            let _ = tx.send(Instruction::Slot(slot)).await;
+        });
+        WsSession::send_json(ctx, &WsServerMessage::Slot(slot));
+    }
+}
+
+fn handle_client_sneak(
+    ctx: &mut ws::WebsocketContext<WsSession>,
+    tx: &Arc<Sender<Instruction>>,
+    sneaking: bool,
+) {
+    let tx = tx.clone();
+    rt::spawn(async move {
+        let _ = tx.send(Instruction::Sneak(sneaking)).await;
+    });
+    WsSession::send_json(
+        ctx,
+        &WsServerMessage::Result {
+            success: true,
+            message: if sneaking {
+                "sneaking"
+            } else {
+                "stopped sneaking"
+            }
+            .into(),
+        },
+    );
+}
+
+fn handle_client_walk(tx: &Arc<Sender<Instruction>>, direction: &str) {
+    let dir = match direction {
+        "forward" => Some(WalkDirection::Forward),
+        "backward" => Some(WalkDirection::Backward),
+        "left" => Some(WalkDirection::Left),
+        "right" => Some(WalkDirection::Right),
+        "forward-left" => Some(WalkDirection::ForwardLeft),
+        "forward-right" => Some(WalkDirection::ForwardRight),
+        "backward-left" => Some(WalkDirection::BackwardLeft),
+        "backward-right" => Some(WalkDirection::BackwardRight),
+        "stop" => Some(WalkDirection::None),
+        _ => None,
+    };
+    if let Some(d) = dir {
+        let tx = tx.clone();
+        rt::spawn(async move {
+            let _ = tx.send(Instruction::Walk(d)).await;
+        });
+    }
+}
+
+fn handle_client_jump(ctx: &mut ws::WebsocketContext<WsSession>, tx: &Arc<Sender<Instruction>>) {
+    let tx = tx.clone();
+    rt::spawn(async move {
+        let _ = tx.send(Instruction::Jump).await;
+    });
+    WsSession::send_json(
+        ctx,
+        &WsServerMessage::Result {
+            success: true,
+            message: "jumped".into(),
+        },
+    );
+}
+
+fn handle_client_chat(
+    ctx: &mut ws::WebsocketContext<WsSession>,
+    tx: &Arc<Sender<Instruction>>,
+    msg: String,
+) {
+    let tx = tx.clone();
+    rt::spawn(async move {
+        let _ = tx.send(Instruction::Chat(msg)).await;
+    });
+    WsSession::send_json(
+        ctx,
+        &WsServerMessage::Result {
+            success: true,
+            message: "sent".into(),
+        },
+    );
 }
 
 impl actix::Actor for WsSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        self.heartbeat(ctx);
+        Self::heartbeat(ctx);
 
         let mut rx = self.broadcaster.tx.subscribe();
         let addr = ctx.address();
@@ -357,7 +411,7 @@ pub async fn bot_chat(
     data: web::Data<Arc<Sender<Instruction>>>,
 ) -> impl Responder {
     match data.send(Instruction::Chat(req_body)).await {
-        Ok(_) => "successfully sent instruction",
+        Ok(()) => "successfully sent instruction",
         Err(_) => "failed",
     }
 }
@@ -365,7 +419,7 @@ pub async fn bot_chat(
 #[post("/jump")]
 pub async fn bot_jump(data: web::Data<Arc<Sender<Instruction>>>) -> impl Responder {
     match data.send(Instruction::Jump).await {
-        Ok(_) => "successfully sent instruction",
+        Ok(()) => "successfully sent instruction",
         Err(_) => "failed",
     }
 }
@@ -374,7 +428,7 @@ pub async fn bot_jump(data: web::Data<Arc<Sender<Instruction>>>) -> impl Respond
 pub async fn bot_tab(data: web::Data<Arc<Sender<Instruction>>>) -> impl Responder {
     let (tx, mut rx) = mpsc::channel::<String>(1);
     match data.send(Instruction::TabList(tx)).await {
-        Ok(_) => match rx.recv().await {
+        Ok(()) => match rx.recv().await {
             Some(tablist) => tablist,
             None => "failed receiving tablist".to_string(),
         },
@@ -385,10 +439,10 @@ pub async fn bot_tab(data: web::Data<Arc<Sender<Instruction>>>) -> impl Responde
 #[get("/messages")]
 pub async fn bot_messages(data: web::Data<MessageLog>) -> impl Responder {
     let messages = data.messages.lock().await;
-    messages
-        .iter()
-        .map(|msg| format!("{msg}\n"))
-        .collect::<String>()
+    messages.iter().fold(String::new(), |mut acc, s| {
+        _ = write!(&mut acc, "{s}");
+        acc
+    })
 }
 
 #[post("/walk/{direction}")]
@@ -409,7 +463,7 @@ pub async fn bot_walk(
         _ => return "invalid direction",
     };
     match data.send(Instruction::Walk(direction)).await {
-        Ok(_) => "successfully sent instruction",
+        Ok(()) => "successfully sent instruction",
         Err(_) => "failed",
     }
 }
@@ -425,7 +479,7 @@ pub async fn bot_sneak(
         _ => return "invalid state",
     };
     match data.send(Instruction::Sneak(sneaking)).await {
-        Ok(_) => "successfully sent instruction",
+        Ok(()) => "successfully sent instruction",
         Err(_) => "failed",
     }
 }
@@ -440,7 +494,7 @@ pub async fn bot_slot(
         return "invalid slot (0-8)".to_string();
     }
     match data.send(Instruction::Slot(slot)).await {
-        Ok(_) => "successfully sent instruction".to_string(),
+        Ok(()) => "successfully sent instruction".to_string(),
         Err(_) => "failed".to_string(),
     }
 }
@@ -449,7 +503,7 @@ pub async fn bot_slot(
 pub async fn bot_get_slot(data: web::Data<Arc<Sender<Instruction>>>) -> impl Responder {
     let (tx, mut rx) = mpsc::channel::<u8>(1);
     match data.send(Instruction::GetSlot(tx)).await {
-        Ok(_) => match rx.recv().await {
+        Ok(()) => match rx.recv().await {
             Some(slot) => slot.to_string(),
             None => "failed".to_string(),
         },

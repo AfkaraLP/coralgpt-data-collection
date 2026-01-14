@@ -3,7 +3,7 @@ use rusqlite::params;
 
 pub struct Message {
     pub name: String,
-    pub message: String,
+    pub content: String,
     pub stars: usize,
     pub timestamp: String,
     pub rank: String,
@@ -16,12 +16,12 @@ impl Message {
         let (metadata, message) = message.split_once(':')?;
         let message = message.trim().to_string();
 
-        let mut metadata = metadata.trim().split_whitespace();
+        let mut metadata = metadata.split_whitespace();
 
         let stars_str = metadata.next()?;
         let stars = stars_str
             .chars()
-            .filter(|c| c.is_ascii_digit())
+            .filter(char::is_ascii_digit)
             .collect::<String>()
             .parse::<usize>()
             .ok()?;
@@ -34,7 +34,7 @@ impl Message {
 
         Some(Self {
             name,
-            message,
+            content: message,
             stars,
             timestamp,
             rank,
@@ -47,7 +47,7 @@ impl Message {
         self.ping.replace(ping);
         self
     }
-
+    #[allow(clippy::cast_possible_wrap)]
     pub fn insert(&self, conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         conn.execute(
             "INSERT INTO messages (username, timestamp, starcount, rank, message, ping) 
@@ -57,7 +57,7 @@ impl Message {
                 self.timestamp,
                 self.stars as i64,
                 self.rank,
-                self.message,
+                self.content,
                 self.ping
             ],
         )?;

@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::{sync::Arc, time::Duration};
 
 use azalea::{
@@ -7,10 +8,6 @@ use azalea::{
 use tokio::{sync::mpsc::Sender, time};
 
 use crate::{PWD, State, message::Message, server::WsServerMessage};
-const REGISTER_REQUEST: &str = "CORALMC » Per favore, esegui la registrazione con il comando: /register [password] [confermaPassword]";
-const LOGIN_REQUEST: &str =
-    "CORALMC » Per favore, esegui l'autenticazione con il comando: /login [password]";
-const LOGIN_SUCCESS: &str = "Login eseguito con successo.";
 
 #[derive(Default, Clone, Component)]
 pub enum Instruction {
@@ -38,7 +35,6 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
             tokio::spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(5));
                 let state = Arc::new(state);
-                let bot = Arc::new(bot);
 
                 loop {
                     interval.tick().await;
@@ -47,14 +43,13 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                         let location = state.location.lock().await;
                         location.eq(&BotLocation::BedwarsLobby)
                     };
-                    let new_bot = bot.clone();
                     if is_in_bedwars_lobby {
                         tokio::spawn(async move {
-                            new_bot.walk(azalea::WalkDirection::Backward);
+                            bot.walk(azalea::WalkDirection::Backward);
                             let mut interval = time::interval(Duration::from_secs(10));
                             loop {
                                 interval.tick().await;
-                                new_bot.jump();
+                                bot.jump();
                             }
                         });
                         break eprintln!("successfully joined the bedwars lobby...");
@@ -68,31 +63,15 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                             *location = BotLocation::BedwarsLobby;
                         }
                     }
-                    join_bedwars_lobby(bot.clone(), state).await;
+                    join_bedwars_lobby(&bot, state).await;
                 }
             });
         }
         Event::Chat(message) => {
-            handle_message_event(&bot, message, state.clone()).await;
+            handle_message_event(&bot, message, &state).await;
         }
         Event::Tick => {
-            let mut guard = state.recv_instruction.lock().await;
-            if let Some(recv) = guard.as_mut()
-                && let Some(instruction) = recv.recv().await
-            {
-                eprintln!("received instruction");
-                match instruction {
-                    Instruction::Chat(message) => bot.chat(message),
-                    Instruction::Jump => bot.jump(),
-                    Instruction::TabList(sender) => send_tab_list(&bot, sender).await,
-                    Instruction::Walk(direction) => bot.walk(direction),
-                    Instruction::Sneak(sneaking) => bot.set_crouching(sneaking),
-                    Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
-                    Instruction::GetSlot(sender) => {
-                        let _ = sender.send(bot.selected_hotbar_slot()).await;
-                    }
-                }
-            }
+            handle_instruction(&bot, &state).await;
         }
         _ => {}
     }
@@ -100,21 +79,42 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
     Ok(())
 }
 
+async fn handle_instruction(bot: &Client, state: &State) {
+    let mut guard = state.recv_instruction.lock().await;
+    if let Some(recv) = guard.as_mut()
+        && let Some(instruction) = recv.recv().await
+    {
+        eprintln!("received instruction");
+        match instruction {
+            Instruction::Chat(message) => bot.chat(message),
+            Instruction::Jump => bot.jump(),
+            Instruction::TabList(sender) => send_tab_list(bot, sender).await,
+            Instruction::Walk(direction) => bot.walk(direction),
+            Instruction::Sneak(sneaking) => bot.set_crouching(sneaking),
+            Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
+            Instruction::GetSlot(sender) => {
+                let _ = sender.send(bot.selected_hotbar_slot()).await;
+            }
+        }
+    }
+}
+
 async fn send_tab_list(bot: &Client, sender: Sender<String>) {
     let mut players = String::new();
-    for (_, player) in bot.tab_list().into_iter() {
-        players.push_str(&format!(
-            "{}\n",
+    for (_, player) in bot.tab_list() {
+        _ = writeln!(
+            &mut players,
+            "{}",
             player.display_name.unwrap_or_default().to_html()
-        ));
+        );
     }
     match sender.send(players).await {
-        Ok(_) => eprintln!("successfully sent tablist..."),
+        Ok(()) => eprintln!("successfully sent tablist..."),
         Err(_) => eprintln!("failed to send tablist..."),
     }
 }
 
-async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
+async fn join_bedwars_lobby(bot: &Client, state: Arc<State>) {
     if state.location.lock().await.eq(&BotLocation::Lobby) && !*state.going_to_bedwars.lock().await
     {
         let new_state = state.clone();
@@ -127,14 +127,7 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
         bot.wait_updates(1).await;
 
         eprintln!("opening lobby selector...");
-        bot.write_packet(ServerboundGamePacket::UseItem(
-            azalea::protocol::packets::game::ServerboundUseItem {
-                hand: azalea::protocol::packets::game::s_interact::InteractionHand::MainHand,
-                seq: 0,
-                y_rot: 0.0,
-                x_rot: 0.0,
-            },
-        ));
+        bot.right_click();
         tokio::time::sleep(Duration::from_millis(1000)).await;
         bot.wait_updates(1).await;
         if let Some(container) = bot.wait_for_container_open(Some(400)).await
@@ -161,9 +154,9 @@ async fn join_bedwars_lobby(bot: Arc<Client>, state: Arc<State>) {
     }
 }
 
-async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, state: State) {
+async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, state: &State) {
     println!("{}", message.message().to_ansi());
-    handle_register_login(bot, &message, &state).await;
+    handle_register_login(bot, &message, state).await;
     let html_message = message.message().to_html();
     {
         let mut messages = state.messages.lock().await;
@@ -175,20 +168,18 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
     let message = message.message().to_string();
     if state.location.lock().await.eq(&BotLocation::BedwarsLobby)
         && message.to_lowercase().trim().starts_with('[')
+        && let Some(mut message) = Message::parse(&message)
+        && let Some(conn) = state.conn.lock().await.as_ref()
     {
-        if let Some(mut message) = Message::parse(&message)
-            && let Some(conn) = state.conn.lock().await.as_ref()
+        let username = message.name.as_str();
+        if let Some(player_uuid) = bot.player_uuid_by_username(username)
+            && let Some(player) = bot.tab_list().get(&player_uuid)
         {
-            let username = message.name.as_str();
-            if let Some(player_uuid) = bot.player_uuid_by_username(username)
-                && let Some(player) = bot.tab_list().get(&player_uuid)
-            {
-                message = message.set_ping(player.latency as i64);
-            }
-            match message.insert(conn) {
-                Ok(_) => {}
-                Err(_) => eprintln!("failed writing to db..."),
-            };
+            message = message.set_ping(player.latency.into());
+        }
+        match message.insert(conn) {
+            Ok(()) => {}
+            Err(_) => eprintln!("failed writing to db..."),
         }
     }
 }
@@ -198,19 +189,46 @@ async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket,
         .message()
         .to_string()
         .trim()
-        .contains(REGISTER_REQUEST)
+        .contains("CORALMC » Per favore, esegui la registrazione con il comando: /register [password] [confermaPassword]")
     {
         eprintln!("registering...");
         bot.chat(format!("/register {PWD} {PWD}"));
     }
-    if message.message().to_string().trim().contains(LOGIN_REQUEST) {
+    if message
+        .message()
+        .to_string()
+        .trim()
+        .contains("CORALMC » Per favore, esegui l'autenticazione con il comando: /login [password]")
+    {
         eprintln!("logging in...");
         bot.chat(format!("/login {PWD}"));
     }
 
-    if message.message().to_string().trim().contains(LOGIN_SUCCESS) {
+    if message
+        .message()
+        .to_string()
+        .trim()
+        .contains("Login eseguito con successo.")
+    {
         eprintln!("setting location to lobby...");
         let mut location = state.location.lock().await;
         *location = BotLocation::Lobby;
+    }
+}
+
+pub trait RightClick {
+    fn right_click(&self);
+}
+
+impl RightClick for Client {
+    fn right_click(&self) {
+        self.write_packet(ServerboundGamePacket::UseItem(
+            azalea::protocol::packets::game::ServerboundUseItem {
+                hand: azalea::protocol::packets::game::s_interact::InteractionHand::MainHand,
+                seq: 0,
+                y_rot: 0.0,
+                x_rot: 0.0,
+            },
+        ));
     }
 }
