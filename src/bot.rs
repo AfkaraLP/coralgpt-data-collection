@@ -52,21 +52,19 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                                 bot.walk(WalkDirection::None);
                                 if let Some(inventory) = bot.open_inventory()
                                     && let Some(slots) = inventory.slots()
+                                    && !slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
+                                    && !bot.tab_list().into_iter().any(|entry| {
+                                        entry
+                                            .1
+                                            .display_name
+                                            .unwrap_or_default()
+                                            .to_string()
+                                            .to_lowercase()
+                                            .contains("[CoralProxy]")
+                                    })
                                 {
-                                    if !slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
-                                        && !bot.tab_list().into_iter().any(|entry| {
-                                            entry
-                                                .1
-                                                .display_name
-                                                .unwrap_or_default()
-                                                .to_string()
-                                                .to_lowercase()
-                                                .contains("[CoralProxy]")
-                                        })
-                                    {
-                                        bot.chat("/l");
-                                        join_bedwars_lobby(&bot).await;
-                                    }
+                                    bot.chat("/l");
+                                    join_bedwars_lobby(&bot).await;
                                 }
                             }
                         });
