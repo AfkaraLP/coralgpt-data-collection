@@ -399,17 +399,27 @@
         let ws = null;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 10;
-        const BLOCKLIST_URL = 'https://raw.githubusercontent.com/AfkaraLP/no-coral-ad/refs/heads/main/base.txt';
+        const BLOCKLIST_URLS = ['base.txt', 'perks.txt', 'game_events.txt'];
 
         async function loadBlocklist() {
             try {
-                const res = await fetch(BLOCKLIST_URL);
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const text = await res.text();
-                blocklist = text
+                const results = await Promise.all(
+                    BLOCKLIST_URLS.map(async (url) => {
+                        const res = await fetch(`https://raw.githubusercontent.com/AfkaraLP/no-coral-ad/refs/heads/main/${url}`);
+                        if (!res.ok) throw new Error('HTTP ' + res.status + ' at ' + url);
+                        return res.text();
+                    })
+                );
+
+                const merged = results
+                    .join('\n')
                     .split('\n')
                     .map(l => l.trim())
                     .filter(l => l.length > 0 && !l.startsWith('#'));
+
+                // remove duplicates
+                blocklist = [...new Set(merged)];
+
                 console.log('Blocklist loaded:', blocklist.length, 'entries');
             } catch (e) {
                 console.error('Failed to load blocklist:', e);
