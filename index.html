@@ -45,6 +45,14 @@
             image-rendering: pixelated;
         }
 
+        .highlight-bot {
+            color: var(--diamond);
+            background: rgba(74, 237, 217, 0.2);
+            padding: 0 4px;
+            border: 1px solid var(--diamond);
+            text-shadow: 1px 1px 0 #000;
+        }
+
         /* Minecraft Button Style */
         .mc-btn {
             background: linear-gradient(180deg, #7A7A7A 0%, #5A5A5A 50%, #4A4A4A 50%, #3A3A3A 100%);
@@ -401,6 +409,15 @@
         const maxReconnectAttempts = 10;
         const BLOCKLIST_URLS = ['base.txt', 'perks.txt', 'game_events.txt'];
 
+        function formatMessage(text) {
+            const pattern = /CoralGPTv0d1/g;
+            let newText = text.replace(pattern,
+                '<span class="highlight-bot">CoralGPTv0d1</span>'
+            );
+
+            return newText;
+        }
+
         async function loadBlocklist() {
             try {
                 const results = await Promise.all(
@@ -461,7 +478,7 @@
             const wasAtBottom = messagesEl.scrollHeight - messagesEl.scrollTop <= messagesEl.clientHeight + 50;
 
             messagesEl.innerHTML = filtered.map(msg =>
-                `<div class="message message-received"><div class="message-bubble">${msg}</div></div>`
+                `<div class="message message-received"><div class="message-bubble">${formatMessage(msg)}</div></div>`
             ).join('');
 
             if (wasAtBottom) {
