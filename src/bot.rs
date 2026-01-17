@@ -1,6 +1,9 @@
-use std::fmt::Write;
+use std::panic::{AssertUnwindSafe, UnwindSafe};
 use std::time::Duration;
+use std::{fmt::Write, intrinsics::mir::UnwindActionArg};
 
+use azalea::container::ContainerHandle;
+use azalea::protocol::packets::game::ClientboundSetBorderWarningDistance;
 use azalea::{
     WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
     registry::builtin::ItemKind,
@@ -50,7 +53,15 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                                 bot.jump();
                                 tokio::time::sleep(Duration::from_secs(2)).await;
                                 bot.walk(WalkDirection::None);
-                                if let Some(inventory) = bot.open_inventory()
+
+                                let mut inventory: Option<ContainerHandle> = None;
+                                std::panic::catch_unwind(AssertUnwindSafe(|| {
+                                    if let Some(opened_inv) = bot.open_inventory() {
+                                        inventory.replace(opened_inv);
+                                    }
+                                }));
+
+                                if let Some(inventory) = inventory
                                     && let Some(slots) = inventory.slots()
                                     && !slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
                                     && !bot.tab_list().into_iter().any(|entry| {
@@ -70,7 +81,15 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                         });
                         break eprintln!("successfully joined the bedwars lobby...");
                     }
-                    if let Some(inventory) = bot.open_inventory()
+
+                    let mut inventory: Option<ContainerHandle> = None;
+                    std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        if let Some(opened_inv) = bot.open_inventory() {
+                            inventory.replace(opened_inv);
+                        }
+                    }));
+
+                    if let Some(inventory) = inventory
                         && let Some(slots) = inventory.slots()
                         && slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
                     {
