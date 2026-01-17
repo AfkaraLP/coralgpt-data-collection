@@ -1,9 +1,8 @@
-use std::panic::{AssertUnwindSafe, UnwindSafe};
+use std::fmt::Write;
+use std::panic::AssertUnwindSafe;
 use std::time::Duration;
-use std::{fmt::Write, intrinsics::mir::UnwindActionArg};
 
 use azalea::container::ContainerHandle;
-use azalea::protocol::packets::game::ClientboundSetBorderWarningDistance;
 use azalea::{
     WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
     registry::builtin::ItemKind,
@@ -55,7 +54,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                                 bot.walk(WalkDirection::None);
 
                                 let mut inventory: Option<ContainerHandle> = None;
-                                std::panic::catch_unwind(AssertUnwindSafe(|| {
+                                _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
                                     if let Some(opened_inv) = bot.open_inventory() {
                                         inventory.replace(opened_inv);
                                     }
@@ -83,7 +82,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                     }
 
                     let mut inventory: Option<ContainerHandle> = None;
-                    std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
                         if let Some(opened_inv) = bot.open_inventory() {
                             inventory.replace(opened_inv);
                         }
