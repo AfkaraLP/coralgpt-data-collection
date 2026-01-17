@@ -407,7 +407,7 @@
         let ws = null;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 10;
-        const BLOCKLIST_URLS = ['base.txt', 'perks.txt', 'game_events.txt'];
+        const BLOCKLIST_URL = 'all.txt';
 
         function formatMessage(text) {
             const pattern = /CoralGPTv0d1/g;
@@ -420,16 +420,14 @@
 
         async function loadBlocklist() {
             try {
-                const results = await Promise.all(
-                    BLOCKLIST_URLS.map(async (url) => {
-                        const res = await fetch(`https://raw.githubusercontent.com/AfkaraLP/no-coral-ad/refs/heads/main/${url}`);
-                        if (!res.ok) throw new Error('HTTP ' + res.status + ' at ' + url);
-                        return res.text();
-                    })
+                const res = await fetch(
+                    `https://raw.githubusercontent.com/AfkaraLP/no-coral-ad/refs/heads/main/${BLOCKLIST_URL}`
                 );
+                if (!res.ok) throw new Error('HTTP ' + res.status + ' at ' + BLOCKLIST_URL);
+        
+                const text = await res.text();
 
-                const merged = results
-                    .join('\n')
+                const merged = text
                     .split('\n')
                     .map(l => l.trim())
                     .filter(l => l.length > 0 && !l.startsWith('#'));
