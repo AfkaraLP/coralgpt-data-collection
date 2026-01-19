@@ -73,7 +73,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                                             .contains("[CoralProxy]")
                                     })
                                 {
-                                    bot.chat("/l");
+                                    bot.chat("/hub");
                                     join_bedwars_lobby(&bot).await;
                                 }
                             }
