@@ -50,7 +50,13 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                                 interval.tick().await;
                                 bot.walk(azalea::WalkDirection::Backward);
                                 bot.jump();
-                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                tokio::time::sleep(Duration::from_secs(4)).await;
+                                bot.walk(WalkDirection::Left);
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                bot.walk(WalkDirection::Right);
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                bot.walk(WalkDirection::Forward);
+                                tokio::time::sleep(Duration::from_millis(500)).await;
                                 bot.walk(WalkDirection::None);
 
                                 let mut inventory: Option<ContainerHandle> = None;
