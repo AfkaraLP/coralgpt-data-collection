@@ -50,12 +50,12 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                                 interval.tick().await;
                                 bot.walk(azalea::WalkDirection::Backward);
                                 bot.jump();
-                                tokio::time::sleep(Duration::from_secs(4)).await;
-                                bot.walk(WalkDirection::Left);
+                                tokio::time::sleep(Duration::from_secs(3)).await;
+                                bot.walk(WalkDirection::BackwardLeft);
                                 tokio::time::sleep(Duration::from_millis(500)).await;
-                                bot.walk(WalkDirection::Right);
-                                tokio::time::sleep(Duration::from_millis(500)).await;
-                                bot.walk(WalkDirection::Forward);
+                                bot.walk(WalkDirection::BackwardRight);
+                                tokio::time::sleep(Duration::from_millis(1000)).await;
+                                bot.walk(WalkDirection::BackwardLeft);
                                 tokio::time::sleep(Duration::from_millis(500)).await;
                                 bot.walk(WalkDirection::None);
 
