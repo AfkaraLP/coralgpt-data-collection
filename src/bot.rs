@@ -220,7 +220,7 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
 
 async fn notify_roby_join() {
     let client = reqwest::Client::new();
-    let body = r##"{"data":{"content":"# 📡 **ENTRY DETECTED**\n\n---\n\n### 👤 **User:** `Roby98`\n\n### 🟢 **Status:** `CONNECTED`\n\n---\n\n> **Note:** The target user **Roby98** has just joined the server!!!"},"_id":"JGNK2OprgY"}"##;
+    let body = r##"{"content":"# 📡 **ENTRY DETECTED**\n\n---\n\n### 👤 **User:** `Roby98`\n\n### 🟢 **Status:** `CONNECTED`\n\n---\n\n> **Note:** The target user **Roby98** has just joined the server!!!"}"##;
     _ = client.post("REDACTED").body(body).send().await;
 }
 
