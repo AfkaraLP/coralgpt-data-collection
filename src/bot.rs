@@ -194,6 +194,9 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         broadcaster.send(WsServerMessage::NewMessage(html_message));
     }
     let message = message.message().to_string();
+    if message.contains("Roby98 è entrato nella lobby.") {
+        notify_roby_join().await;
+    }
     if message.contains("La partita inizia tra") {
         bot.chat("/l");
     }
@@ -213,6 +216,12 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
             Err(_) => eprintln!("failed writing to db..."),
         }
     }
+}
+
+async fn notify_roby_join() {
+    let client = reqwest::Client::new();
+    let body = r##"{"data":{"content":"# 📡 **ENTRY DETECTED**\n\n---\n\n### 👤 **User:** `Roby98`\n\n### 🟢 **Status:** `CONNECTED`\n\n---\n\n> **Note:** The target user **Roby98** has just joined the server!!!"},"_id":"JGNK2OprgY"}"##;
+    _ = client.post("REDACTED").body(body).send().await;
 }
 
 async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket, state: &State) {
