@@ -220,8 +220,10 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
 
 async fn notify_roby_join() {
     let client = reqwest::Client::new();
-    let body = r##"{"content":"# 📡 **ENTRY DETECTED**\n\n---\n\n### 👤 **User:** `Roby98`\n\n### 🟢 **Status:** `CONNECTED`\n\n---\n\n> **Note:** The target user **Roby98** has just joined the server!!!"}"##;
-    _ = client.post("REDACTED").body(body).send().await;
+    let body = r##"{"content": "# 📡 **ENTRY DETECTED** <@&1151557434494681139>\n\n### 👤 **User:** `Roby98`\n\n### 🟢 **Status:** `CONNECTED`\n\n> **Note:** The target user **Roby98** has just joined the server!!!"}"##;
+    if let Err(e) = client.post("REDACTED").body(body).header("Content-Type", "application/json").send().await {
+        eprintln!("failed sending webhook: {e:#?}");
+    }
 }
 
 async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket, state: &State) {
