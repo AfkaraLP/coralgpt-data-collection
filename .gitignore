@@ -3,3 +3,4 @@
 chat.log
 chat_log.db
 copy.db
+.env
