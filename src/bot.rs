@@ -205,6 +205,7 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         && let Some(mut message) = Message::parse(&message)
         && let Some(conn) = state.conn.lock().await.as_ref()
     {
+        eprintln!("writing msg to db...");
         let username = message.name.as_str();
         if let Some(player_uuid) = bot.player_uuid_by_username(username)
             && let Some(player) = bot.tab_list().get(&player_uuid)
