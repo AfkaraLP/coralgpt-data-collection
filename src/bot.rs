@@ -9,7 +9,8 @@ use azalea::{
 };
 use tokio::{sync::mpsc::Sender, time};
 
-use crate::{PWD, State, message::Message, server::WsServerMessage};
+use crate::ENV_VARS;
+use crate::{State, message::Message, server::WsServerMessage};
 
 #[derive(Default, Clone, Component)]
 pub enum Instruction {
@@ -228,6 +229,7 @@ async fn notify_roby_join() {
 }
 
 async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket, state: &State) {
+    let pwd = &ENV_VARS.password;
     if message
         .message()
         .to_string()
@@ -235,7 +237,7 @@ async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket,
         .contains("CORALMC » Per favore, esegui la registrazione con il comando: /register [password] [confermaPassword]")
     {
         eprintln!("registering...");
-        bot.chat(format!("/register {PWD} {PWD}"));
+        bot.chat(format!("/register {pwd} {pwd}"));
     }
     if message
         .message()
@@ -244,7 +246,7 @@ async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket,
         .contains("CORALMC » Per favore, esegui l'autenticazione con il comando: /login [password]")
     {
         eprintln!("logging in...");
-        bot.chat(format!("/login {PWD}"));
+        bot.chat(format!("/login {pwd}"));
     }
 
     if message
