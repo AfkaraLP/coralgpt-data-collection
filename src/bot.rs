@@ -201,8 +201,7 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
     if message.contains("La partita inizia tra") {
         bot.chat("/l");
     }
-    if state.location.lock().await.eq(&BotLocation::BedwarsLobby)
-        && message.to_lowercase().trim().starts_with('[')
+    if message.to_lowercase().trim().starts_with('[')
         && let Some(mut message) = Message::parse(&message)
         && let Some(conn) = state.conn.lock().await.as_ref()
     {
