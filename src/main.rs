@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::signal;
 use tokio::sync::{Mutex, mpsc::Receiver};
 
+use crate::agent::openai_client::OpenAIClient;
 use crate::buffer::FifoBuffer;
 use crate::server::{Broadcaster, MessageLog, bot_messages, ws_handler};
 use crate::{
@@ -19,6 +20,7 @@ use crate::{
     server::{bot_chat, bot_get_slot, bot_jump, bot_slot, bot_sneak, bot_tab, bot_walk, index},
 };
 
+mod agent;
 mod bot;
 mod buffer;
 mod message;
@@ -29,18 +31,39 @@ pub struct EnvVars {
     pub password: String,
     pub port: u16,
     pub db_path: String,
+    pub openai_client: Option<OpenAIClient>,
 }
 
 pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
-    let username: String = dotenv::var("USERNAME").unwrap();
-    let password: String = dotenv::var("PASSWORD").unwrap();
-    let port: u16 = dotenv::var("PORT").unwrap().parse().unwrap();
-    let db_path: String = dotenv::var("DB_PATH").unwrap();
+    let username: String = dotenv::var("USERNAME").expect("Please set USERNAME env var");
+    let password: String = dotenv::var("PASSWORD").expect("Please set PASSWORD env var");
+    let port: u16 = dotenv::var("PORT")
+        .expect("Please set PORT env var")
+        .parse()
+        .unwrap();
+    let db_path: String = dotenv::var("DB_PATH").expect("Please set DB_PATH env var");
+    let openai_client = if let Ok(url) = dotenv::var("OPENAI_URL")
+        && let Ok(model) = dotenv::var("MODEL")
+    {
+        let header_kv = dotenv::var("AUTH").ok().and_then(|v| {
+            v.split_once('|')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        });
+        Some(OpenAIClient::new(
+            url,
+            reqwest::Client::new(),
+            model,
+            header_kv,
+        ))
+    } else {
+        None
+    };
     EnvVars {
         username,
         password,
         port,
         db_path,
+        openai_client,
     }
 });
 

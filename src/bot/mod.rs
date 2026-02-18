@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::fmt::Write;
 use std::panic::AssertUnwindSafe;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use azalea::container::ContainerHandle;
@@ -7,9 +9,12 @@ use azalea::{
     WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
     registry::builtin::ItemKind,
 };
+use regex::Regex;
 use tokio::{sync::mpsc::Sender, time};
 
 use crate::ENV_VARS;
+use crate::agent::openai_client::ChatCompletionMessageParam;
+use crate::agent::tool::{ToolCallArgDescriptor, ToolCallFn};
 use crate::{State, message::Message, server::WsServerMessage};
 
 #[derive(Default, Clone, Component)]
@@ -34,7 +39,17 @@ pub enum BotLocation {
 
 pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<()> {
     match event {
+        // Event::Packet(p) => {
+        //      let p = format!("{p:#?}");
+        //      let p = p.split_whitespace();
+        //      let p = p.collect::<Vec<&str>>();
+        //      let s = p.first().unwrap();
+        //      println!("{s}");
+        // }
         Event::Spawn => {
+            let pwd = &ENV_VARS.password;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            bot.chat(format!("/login {pwd}"));
             tokio::spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(5));
 
@@ -120,12 +135,17 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
     Ok(())
 }
 
+static DM_MSG_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(Da \w{3,16}\) .*$").unwrap());
+pub fn is_dm_message(msg: impl AsRef<str>) -> bool {
+    DM_MSG_REGEX.is_match(msg.as_ref())
+}
+
 async fn handle_instruction(bot: &Client, state: &State) {
     let mut guard = state.recv_instruction.lock().await;
     if let Some(recv) = guard.as_mut()
         && let Some(instruction) = recv.recv().await
     {
-        eprintln!("received instruction");
         match instruction {
             Instruction::Chat(message) => bot.chat(message),
             Instruction::Jump => bot.jump(),
@@ -160,7 +180,6 @@ async fn join_bedwars_lobby(bot: &Client) {
     tokio::time::sleep(Duration::from_secs(1)).await;
     bot.wait_updates(1).await;
 
-    eprintln!("opening lobby selector...");
     bot.right_click();
     tokio::time::sleep(Duration::from_secs(1)).await;
     bot.wait_updates(1).await;
@@ -195,6 +214,17 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         broadcaster.send(WsServerMessage::NewMessage(html_message));
     }
     let message = message.message().to_string();
+    if is_dm_message(&message) {
+        let re = Regex::new(r"\(Da (\w+)\) (.*)");
+        if let Ok(re) = re
+            && let Some(captures) = re.captures(&message)
+            && let Some(username) = captures.get(1)
+            && let Some(message) = &captures.get(2)
+            && ["Afkara", "NickAc", "8hi"].contains(&username.as_str())
+        {
+            handle_admin_dm(message.as_str(), username.as_str(), &bot, &state).await;
+        }
+    }
     if message.contains("Roby98 è entrato nella lobby.") {
         notify_roby_join().await;
     }
@@ -205,7 +235,6 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         && let Some(mut message) = Message::parse(&message)
         && let Some(conn) = state.conn.lock().await.as_ref()
     {
-        eprintln!("writing msg to db...");
         let username = message.name.as_str();
         if let Some(player_uuid) = bot.player_uuid_by_username(username)
             && let Some(player) = bot.tab_list().get(&player_uuid)
@@ -215,6 +244,82 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         match message.insert(conn) {
             Ok(()) => {}
             Err(_) => eprintln!("failed writing to db..."),
+        }
+    }
+}
+
+struct TestTool;
+impl ToolCallFn for TestTool {
+    fn get_name(&self) -> String {
+        "test_tool".into()
+    }
+
+    fn get_description(&self) -> String {
+        "always call this tool, as this is for testing purposes".into()
+    }
+
+    fn invoke(&self, args: serde_json::Value) -> String {
+        let Some(test_arg) = args.get("test_argument") else {
+            return "Tool called incorrectly".into();
+        };
+        eprintln!("test arg: {test_arg}");
+        format!("your test argument was: {test_arg}")
+    }
+
+    fn get_args(&self) -> Vec<crate::agent::tool::ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor {
+            required: true,
+            name: "test_argument".into(),
+            argtype: "string".into(),
+            description: "pass some random value to this argument".into(),
+        }]
+    }
+}
+
+async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &State) {
+    println!("did admin dm");
+    if let Some(ai_client) = &ENV_VARS.openai_client {
+        println!("on admin api had env vars");
+        let system_promt = ChatCompletionMessageParam {
+            content: "You are in control of a minceraft bot".into(),
+            role: crate::agent::openai_client::AIChatRole::System,
+        };
+        let tool = TestTool;
+        let mut tools_map = HashMap::new();
+        tools_map.insert(
+            "test_tool".to_string(),
+            Box::new(tool) as Box<dyn ToolCallFn + Send + Sync>,
+        );
+        let mut messages = Vec::new();
+        messages.push(system_promt);
+        if message.starts_with("/agent") {
+            let user_message = ChatCompletionMessageParam {
+                content: message
+                    .strip_prefix("/agent")
+                    .unwrap_or_default()
+                    .to_string(),
+                role: crate::agent::openai_client::AIChatRole::User,
+            };
+            messages.push(user_message);
+
+            loop {
+                let comp = ai_client.get_completion(&messages, &tools_map).await;
+                println!("got comp: {comp:#?}");
+                let Ok(completion) = comp else {
+                    println!("did not get completion???");
+                    break;
+                };
+                let Some(first) = completion.choices.first() else {
+                    println!("breaking, not getting first completion choice");
+                    break;
+                };
+                let Some(ref tool_calls) = first.message.tool_calls else {
+                    println!("no toolcall, breaking");
+                    break;
+                };
+                let calltype = tool_calls.first().unwrap().ftype.clone();
+                println!("called type: {calltype}");
+            }
         }
     }
 }
