@@ -28,10 +28,10 @@ impl OpenAIClient {
         }
     }
 
-    pub async fn get_completion(
-        &self,
+    pub async fn get_completion<'a>(
+        &'a self,
         messages: &Vec<ChatCompletionMessageParam>,
-        tools: &HashMap<String, Box<dyn ToolCallFn + Send + Sync>>,
+        tools: &HashMap<String, Box<dyn ToolCallFn + Send + Sync + 'a>>,
     ) -> anyhow::Result<ChatCompletionResponse> {
         let req_tools: Vec<serde_json::Value> =
             tools.values().map(|tool| tool.to_json_value()).collect();
@@ -80,6 +80,8 @@ pub struct ChatCompletionMessageParam {
 pub enum AIChatRole {
     #[serde(rename = "user")]
     User,
+    #[serde(rename = "tool")]
+    Tool,
     #[serde(rename = "system")]
     System,
     #[serde(rename = "assistant")]
@@ -113,5 +115,6 @@ pub struct ToolInvocation {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolInvocationFunction {
-    pub arguments: serde_json::Value,
+    pub arguments: String,
+    pub name: String,
 }

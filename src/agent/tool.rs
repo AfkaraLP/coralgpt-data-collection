@@ -6,7 +6,7 @@ pub trait ToolCallFn {
     #[must_use]
     fn get_description(&self) -> String;
 
-    fn invoke(&self, args: serde_json::Value) -> String;
+    fn invoke(&self, args: &serde_json::Value) -> String;
 
     #[must_use]
     fn to_json_value(&self) -> serde_json::Value {

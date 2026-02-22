@@ -258,7 +258,7 @@ impl ToolCallFn for TestTool {
         "always call this tool, as this is for testing purposes".into()
     }
 
-    fn invoke(&self, args: serde_json::Value) -> String {
+    fn invoke(&self, args: &serde_json::Value) -> String {
         let Some(test_arg) = args.get("test_argument") else {
             return "Tool called incorrectly".into();
         };
@@ -276,7 +276,76 @@ impl ToolCallFn for TestTool {
     }
 }
 
-async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &State) {
+struct MessageUser<'a>(String, &'a Client);
+impl ToolCallFn for MessageUser<'_> {
+    fn get_name(&self) -> String {
+        "message_user".into()
+    }
+
+    fn get_description(&self) -> String {
+        "write a message ingame to the user that prompted you".into()
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> String {
+        let Some(message) = args.get("message") else {
+            return "please provide an actual message to the message tool".into();
+        };
+        let serde_json::Value::String(message) = message else {
+            return "message has to be of type string".into();
+        };
+        if message.chars().count() > 100 {
+            self.1.chat(format!(
+                "/msg {} {}",
+                self.0,
+                message.chars().take(100).collect::<String>()
+            ));
+            return "message too long, truncating to 100 chars and sending anyway".into();
+        }
+        self.1.chat(format!("/msg {} {}", self.0, message));
+        "successfully sent message".into()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor {
+            required: true,
+            name: "message".into(),
+            argtype: "string".into(),
+            description: "the message to be sent to the user, no more than 100 characters".into(),
+        }]
+    }
+}
+
+struct ReadTab<'a>(&'a Client);
+impl ToolCallFn for ReadTab<'_> {
+    fn get_name(&self) -> String {
+        "read_tab".into()
+    }
+
+    fn get_description(&self) -> String {
+        "read the tablist of the current lobby".into()
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> String {
+        let tablist =
+            self.0
+                .tab_list()
+                .iter()
+                .fold(String::from("got tablist:\n"), |mut acc, entry| {
+                    if let Some(ref name) = entry.1.display_name {
+                        let name = name.to_string();
+                        _ = writeln!(&mut acc, "{name:#?}");
+                    }
+                    acc
+                });
+        tablist
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        Vec::new()
+    }
+}
+
+async fn handle_admin_dm<'a>(message: &str, username: &str, bot: &'a Client, state: &State) {
     println!("did admin dm");
     if let Some(ai_client) = &ENV_VARS.openai_client {
         println!("on admin api had env vars");
@@ -284,15 +353,26 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
             content: "You are in control of a minceraft bot".into(),
             role: crate::agent::openai_client::AIChatRole::System,
         };
-        let tool = TestTool;
         let mut tools_map = HashMap::new();
+        let tool = TestTool;
         tools_map.insert(
-            "test_tool".to_string(),
+            tool.get_name(),
+            Box::new(tool) as Box<dyn ToolCallFn + Send + Sync>,
+        );
+        let tool = ReadTab(bot);
+        tools_map.insert(
+            tool.get_name(),
+            Box::new(tool) as Box<dyn ToolCallFn + Send + Sync>,
+        );
+        let tool = MessageUser(username.to_string(), bot);
+        tools_map.insert(
+            tool.get_name(),
             Box::new(tool) as Box<dyn ToolCallFn + Send + Sync>,
         );
         let mut messages = Vec::new();
         messages.push(system_promt);
         if message.starts_with("/agent") {
+            let mut tools_call_count = 0_usize;
             let user_message = ChatCompletionMessageParam {
                 content: message
                     .strip_prefix("/agent")
@@ -304,21 +384,51 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
 
             loop {
                 let comp = ai_client.get_completion(&messages, &tools_map).await;
-                println!("got comp: {comp:#?}");
                 let Ok(completion) = comp else {
-                    println!("did not get completion???");
                     break;
                 };
                 let Some(first) = completion.choices.first() else {
-                    println!("breaking, not getting first completion choice");
                     break;
                 };
                 let Some(ref tool_calls) = first.message.tool_calls else {
-                    println!("no toolcall, breaking");
                     break;
                 };
-                let calltype = tool_calls.first().unwrap().ftype.clone();
-                println!("called type: {calltype}");
+                if tool_calls.is_empty() {
+                    eprintln!(
+                        "Assistant:\n\n{}",
+                        first
+                            .message
+                            .content
+                            .as_ref()
+                            .unwrap_or(&String::from("couldn't respond to request"))
+                    );
+                    break;
+                }
+
+                tools_call_count += 1;
+                if tools_call_count > 20 {
+                    eprintln!("breaking because max toolcalls of 20 has been reached");
+                    break;
+                }
+                let mut tool_responses = String::new();
+                for tool_call in tool_calls {
+                    if let Some(tool) = tools_map.get(&tool_call.function.name) {
+                        let answer = tool.invoke(
+                            &serde_json::from_str(&tool_call.function.arguments)
+                                .unwrap_or_default(),
+                        );
+                        _ = writeln!(
+                            &mut tool_responses,
+                            "tool({}) output: \n\n{answer}",
+                            tool.get_name()
+                        );
+                    }
+                }
+                messages.push(ChatCompletionMessageParam {
+                    content: tool_responses,
+                    role: crate::agent::openai_client::AIChatRole::Tool,
+                });
+                println!("[LLM] we sent messages: \n\n{messages:#?}");
             }
         }
     }
