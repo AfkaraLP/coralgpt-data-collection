@@ -1,12 +1,12 @@
 //! A bot that logs chat messages and the number that we've received to the console.
 
 use actix_web::{App, HttpServer, web};
-use azalea::prelude::*;
 use azalea::{
     ClientBuilder,
     app::AppExit,
     prelude::{Account, Component},
 };
+use azalea::{FormattedText, prelude::*};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::signal;
@@ -72,7 +72,7 @@ pub struct State {
     pub location: Arc<Mutex<BotLocation>>,
     pub recv_instruction: Arc<Mutex<Option<Receiver<Instruction>>>>,
     pub conn: Arc<Mutex<Option<rusqlite::Connection>>>,
-    pub messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+    pub messages: Arc<Mutex<FifoBuffer<1000, FormattedText>>>,
     pub broadcaster: Option<Arc<Broadcaster>>,
 }
 
@@ -80,7 +80,7 @@ impl State {
     pub fn new(
         recv_instruction: Receiver<Instruction>,
         conn: rusqlite::Connection,
-        messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+        messages: Arc<Mutex<FifoBuffer<1000, FormattedText>>>,
         broadcaster: Arc<Broadcaster>,
     ) -> Self {
         Self {
@@ -97,7 +97,8 @@ impl State {
 async fn main() -> AppExit {
     let (instruction_sender, instruction_receiver) = tokio::sync::mpsc::channel::<Instruction>(10);
     let instruction_sender = Arc::new(instruction_sender);
-    let messages: Arc<Mutex<FifoBuffer<1000, String>>> = Arc::new(Mutex::new(FifoBuffer::new()));
+    let messages: Arc<Mutex<FifoBuffer<1000, FormattedText>>> =
+        Arc::new(Mutex::new(FifoBuffer::new()));
     let connection = instantiate_db(&ENV_VARS.db_path).expect("failed starting db");
 
     let broadcaster = Arc::new(Broadcaster::new());

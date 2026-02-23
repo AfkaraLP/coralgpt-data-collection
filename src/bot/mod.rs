@@ -40,13 +40,6 @@ pub enum BotLocation {
 
 pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<()> {
     match event {
-        // Event::Packet(p) => {
-        //      let p = format!("{p:#?}");
-        //      let p = p.split_whitespace();
-        //      let p = p.collect::<Vec<&str>>();
-        //      let s = p.first().unwrap();
-        //      println!("{s}");
-        // }
         Event::Spawn => {
             let pwd = &ENV_VARS.password;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -206,13 +199,12 @@ async fn join_bedwars_lobby(bot: &Client) {
 async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, state: &State) {
     println!("{}", message.message().to_ansi());
     handle_register_login(bot, &message, state).await;
-    let html_message = message.message().to_html();
     {
         let mut messages = state.messages.lock().await;
-        messages.push(html_message.clone());
+        messages.push(message.message());
     }
     if let Some(ref broadcaster) = state.broadcaster {
-        broadcaster.send(WsServerMessage::NewMessage(html_message));
+        broadcaster.send(WsServerMessage::NewMessage(message.message()));
     }
     let message = message.message().to_string();
     if is_dm_message(&message) {

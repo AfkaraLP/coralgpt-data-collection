@@ -1,7 +1,7 @@
 use actix::{ActorContext, ActorFutureExt, AsyncContext, WrapFuture};
 use actix_web::{HttpRequest, HttpResponse, Responder, get, post, rt, web};
 use actix_web_actors::ws;
-use azalea::WalkDirection;
+use azalea::{FormattedText, WalkDirection};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::sync::Arc;
@@ -43,7 +43,7 @@ pub enum WsServerMessage {
     #[serde(rename = "messages")]
     Messages(Vec<String>),
     #[serde(rename = "newMessage")]
-    NewMessage(String),
+    NewMessage(FormattedText),
     #[serde(rename = "players")]
     Players(Vec<String>),
     #[serde(rename = "slot")]
@@ -76,7 +76,7 @@ impl Broadcaster {
 pub struct WsSession {
     heartbeat: Instant,
     instruction_tx: Arc<Sender<Instruction>>,
-    messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+    messages: Arc<Mutex<FifoBuffer<1000, FormattedText>>>,
     broadcaster: Arc<Broadcaster>,
     broadcast_task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -84,7 +84,7 @@ pub struct WsSession {
 impl WsSession {
     pub fn new(
         instruction_tx: Arc<Sender<Instruction>>,
-        messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+        messages: Arc<Mutex<FifoBuffer<1000, FormattedText>>>,
         broadcaster: Arc<Broadcaster>,
     ) -> Self {
         Self {
@@ -158,7 +158,8 @@ impl WsSession {
         ctx.spawn(
             async move {
                 let msgs = messages.lock().await;
-                let messages_vec: Vec<String> = msgs.iter().rev().cloned().collect();
+                let messages_vec: Vec<String> =
+                    msgs.iter().rev().map(FormattedText::to_html).collect();
                 WsServerMessage::Messages(messages_vec)
             }
             .into_actor(self)
@@ -395,7 +396,7 @@ pub async fn ws_handler(
 }
 
 pub struct MessageLog {
-    pub messages: Arc<Mutex<FifoBuffer<1000, String>>>,
+    pub messages: Arc<Mutex<FifoBuffer<1000, FormattedText>>>,
 }
 
 const HTML: &str = include_str!("../index.html");
