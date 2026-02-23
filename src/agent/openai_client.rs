@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Values};
 
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,28 @@ pub struct OpenAIClient {
     pub client: reqwest::Client,
     pub model: String,
     pub header_kv: Option<(String, String)>,
+}
+
+pub type BoxedTool<'a> = Box<dyn ToolCallFn + Send + Sync + 'a>;
+pub struct ToolMap<'a>(HashMap<&'static str, BoxedTool<'a>>);
+
+impl<'a> ToolMap<'a> {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    pub fn values(&self) -> Values<'_, &str, BoxedTool<'_>> {
+        self.0.values()
+    }
+
+    pub fn register_tool<T: ToolCallFn + Send + Sync + 'a>(mut self, tool: T) -> Self {
+        self.0.insert(tool.get_name(), Box::new(tool));
+        self
+    }
+
+    pub fn get(&self, key: &str) -> Option<&BoxedTool<'_>> {
+        self.0.get(key)
+    }
 }
 
 impl OpenAIClient {
@@ -30,8 +52,8 @@ impl OpenAIClient {
 
     pub async fn get_completion<'a>(
         &'a self,
-        messages: &Vec<ChatCompletionMessageParam>,
-        tools: &HashMap<String, Box<dyn ToolCallFn + Send + Sync + 'a>>,
+        messages: &[ChatCompletionMessageParam],
+        tools: &ToolMap<'a>,
     ) -> anyhow::Result<ChatCompletionResponse> {
         let req_tools: Vec<serde_json::Value> =
             tools.values().map(|tool| tool.to_json_value()).collect();

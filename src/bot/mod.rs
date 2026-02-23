@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+pub mod tools;
+
 use std::fmt::Write;
 use std::panic::AssertUnwindSafe;
 use std::sync::LazyLock;
@@ -13,8 +14,8 @@ use regex::Regex;
 use tokio::{sync::mpsc::Sender, time};
 
 use crate::ENV_VARS;
-use crate::agent::openai_client::ChatCompletionMessageParam;
-use crate::agent::tool::{ToolCallArgDescriptor, ToolCallFn};
+use crate::agent::openai_client::{ChatCompletionMessageParam, ToolMap};
+use crate::bot::tools::{ReadChatHistory, ReadTabList, RespondToUser, SendChatMessage};
 use crate::{State, message::Message, server::WsServerMessage};
 
 #[derive(Default, Clone, Component)]
@@ -222,7 +223,7 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
             && let Some(message) = &captures.get(2)
             && ["Afkara", "NickAc", "8hi"].contains(&username.as_str())
         {
-            handle_admin_dm(message.as_str(), username.as_str(), &bot, &state).await;
+            handle_admin_dm(message.as_str(), username.as_str(), bot, state).await;
         }
     }
     if message.contains("Roby98 è entrato nella lobby.") {
@@ -248,127 +249,18 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
     }
 }
 
-struct TestTool;
-impl ToolCallFn for TestTool {
-    fn get_name(&self) -> String {
-        "test_tool".into()
-    }
-
-    fn get_description(&self) -> String {
-        "always call this tool, as this is for testing purposes".into()
-    }
-
-    fn invoke(&self, args: &serde_json::Value) -> String {
-        let Some(test_arg) = args.get("test_argument") else {
-            return "Tool called incorrectly".into();
-        };
-        eprintln!("test arg: {test_arg}");
-        format!("your test argument was: {test_arg}")
-    }
-
-    fn get_args(&self) -> Vec<crate::agent::tool::ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor {
-            required: true,
-            name: "test_argument".into(),
-            argtype: "string".into(),
-            description: "pass some random value to this argument".into(),
-        }]
-    }
-}
-
-struct MessageUser<'a>(String, &'a Client);
-impl ToolCallFn for MessageUser<'_> {
-    fn get_name(&self) -> String {
-        "message_user".into()
-    }
-
-    fn get_description(&self) -> String {
-        "write a message ingame to the user that prompted you".into()
-    }
-
-    fn invoke(&self, args: &serde_json::Value) -> String {
-        let Some(message) = args.get("message") else {
-            return "please provide an actual message to the message tool".into();
-        };
-        let serde_json::Value::String(message) = message else {
-            return "message has to be of type string".into();
-        };
-        if message.chars().count() > 100 {
-            self.1.chat(format!(
-                "/msg {} {}",
-                self.0,
-                message.chars().take(100).collect::<String>()
-            ));
-            return "message too long, truncating to 100 chars and sending anyway".into();
-        }
-        self.1.chat(format!("/msg {} {}", self.0, message));
-        "successfully sent message".into()
-    }
-
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor {
-            required: true,
-            name: "message".into(),
-            argtype: "string".into(),
-            description: "the message to be sent to the user, no more than 100 characters".into(),
-        }]
-    }
-}
-
-struct ReadTab<'a>(&'a Client);
-impl ToolCallFn for ReadTab<'_> {
-    fn get_name(&self) -> String {
-        "read_tab".into()
-    }
-
-    fn get_description(&self) -> String {
-        "read the tablist of the current lobby".into()
-    }
-
-    fn invoke(&self, args: &serde_json::Value) -> String {
-        let tablist =
-            self.0
-                .tab_list()
-                .iter()
-                .fold(String::from("got tablist:\n"), |mut acc, entry| {
-                    if let Some(ref name) = entry.1.display_name {
-                        let name = name.to_string();
-                        _ = writeln!(&mut acc, "{name:#?}");
-                    }
-                    acc
-                });
-        tablist
-    }
-
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        Vec::new()
-    }
-}
-
-async fn handle_admin_dm<'a>(message: &str, username: &str, bot: &'a Client, state: &State) {
-    println!("did admin dm");
+async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &State) {
     if let Some(ai_client) = &ENV_VARS.openai_client {
-        println!("on admin api had env vars");
         let system_promt = ChatCompletionMessageParam {
             content: "You are in control of a minceraft bot".into(),
             role: crate::agent::openai_client::AIChatRole::System,
         };
-        let mut tools_map = HashMap::new();
-        let tool = TestTool;
-        tools_map.insert(
-            tool.get_name(),
-            Box::new(tool) as Box<dyn ToolCallFn + Send + Sync>,
-        );
-        let tool = ReadTab(bot);
-        tools_map.insert(
-            tool.get_name(),
-            Box::new(tool) as Box<dyn ToolCallFn + Send + Sync>,
-        );
-        let tool = MessageUser(username.to_string(), bot);
-        tools_map.insert(
-            tool.get_name(),
-            Box::new(tool) as Box<dyn ToolCallFn + Send + Sync>,
-        );
+        // TODO: register tools
+        let tools_map = ToolMap::new()
+            .register_tool(ReadTabList::new(bot))
+            .register_tool(SendChatMessage::new(bot))
+            .register_tool(RespondToUser::new(bot, username))
+            .register_tool(ReadChatHistory::new(state));
         let mut messages = Vec::new();
         messages.push(system_promt);
         if message.starts_with("/agent") {
@@ -413,10 +305,13 @@ async fn handle_admin_dm<'a>(message: &str, username: &str, bot: &'a Client, sta
                 let mut tool_responses = String::new();
                 for tool_call in tool_calls {
                     if let Some(tool) = tools_map.get(&tool_call.function.name) {
-                        let answer = tool.invoke(
-                            &serde_json::from_str(&tool_call.function.arguments)
-                                .unwrap_or_default(),
-                        );
+                        let answer = tool
+                            .invoke(
+                                &serde_json::from_str(&tool_call.function.arguments)
+                                    .unwrap_or_default(),
+                            )
+                            .await;
+                        tokio::time::sleep(tool.get_timeout_wait()).await;
                         _ = writeln!(
                             &mut tool_responses,
                             "tool({}) output: \n\n{answer}",
