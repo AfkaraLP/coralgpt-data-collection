@@ -248,55 +248,112 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
 }
 
 async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &State) {
-    if let Some(ai_client) = &ENV_VARS.openai_client {
-        handle_ai_admin_dm(message, username, bot, state, ai_client).await;
+    if let Some(ai_client) = &ENV_VARS.openai_client
+        && message.starts_with("/agent")
+    {
+        let tools_map = ToolMap::new()
+            .register_tool(SendDirectMessage::new(bot, state))
+            .register_tool(GetStats::new(bot, state))
+            .register_tool(ReadChatHistory::new(state))
+            .register_tool(ReadTabList::new(bot))
+            .register_tool(SendChatMessage::new(bot, state))
+            .register_tool(RespondToUser::new(bot, username, state))
+            .register_tool(GetInventory::new(bot))
+            .register_tool(SelectHotbarSlot::new(bot))
+            .register_tool(JoinParty::new(bot))
+            .register_tool(InviteParty::new(bot))
+            .register_tool(Sleep::new(state))
+            .register_tool(SendPartyMessage::new(bot, state))
+            .register_tool(LeaveParty::new(bot))
+            .register_tool(GetPartyInfo::new(bot, state))
+            .register_tool(AddFriend::new(bot))
+            .register_tool(RemoveFriend::new(bot));
+        bot.run_agent_loop(
+            ai_client,
+            message.strip_prefix("/agent").unwrap_or(message),
+            username,
+            tools_map,
+        )
+        .await;
     }
 }
 
-#[allow(clippy::too_many_lines)]
-async fn handle_ai_admin_dm(
-    message: &str,
-    username: &str,
-    bot: &Client,
-    state: &State,
-    ai_client: &crate::agent::openai_client::OpenAIClient,
-) {
-    let system_promt = ChatCompletionMessageParam {
-        content: SYSTEM_PROMPT.into(),
-        role: crate::agent::openai_client::AIChatRole::System,
-    };
-    let should_stop_agent_loop = Arc::new(Mutex::new(false));
-    let tools_map = ToolMap::new()
-        .register_tool(SendDirectMessage::new(bot, state))
-        .register_tool(GetStats::new(bot, state))
-        .register_tool(ReadChatHistory::new(state))
-        .register_tool(ReadTabList::new(bot))
-        .register_tool(SendChatMessage::new(bot, state))
-        .register_tool(RespondToUser::new(bot, username, state))
-        .register_tool(GetInventory::new(bot))
-        .register_tool(SelectHotbarSlot::new(bot))
-        .register_tool(JoinParty::new(bot))
-        .register_tool(InviteParty::new(bot))
-        .register_tool(StopAgentLoop::new(
+async fn notify_roby_join() {
+    let client = reqwest::Client::new();
+    let body = r##"{"content": "# 📡 **ENTRY DETECTED** <@&1151557434494681139>\n\n### 👤 **User:** `Roby98`\n\n### 🟢 **Status:** `CONNECTED`\n\n> **Note:** The target user **Roby98** has just joined the server!!!"}"##;
+    if let Err(e) = client.post("REDACTED").body(body).header("Content-Type", "application/json").send().await {
+        eprintln!("failed sending webhook: {e:#?}");
+    }
+}
+
+async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket, state: &State) {
+    let pwd = &ENV_VARS.password;
+    if message
+        .message()
+        .to_string()
+        .trim()
+        .contains("CORALMC » Per favore, esegui la registrazione con il comando: /register [password] [confermaPassword]")
+    {
+        eprintln!("registering...");
+        bot.chat(format!("/register {pwd} {pwd}"));
+    }
+    if message
+        .message()
+        .to_string()
+        .trim()
+        .contains("CORALMC » Per favore, esegui l'autenticazione con il comando: /login [password]")
+    {
+        eprintln!("logging in...");
+        bot.chat(format!("/login {pwd}"));
+    }
+
+    if message
+        .message()
+        .to_string()
+        .trim()
+        .contains("Login eseguito con successo.")
+    {
+        eprintln!("setting location to lobby...");
+        let mut location = state.location.lock().await;
+        *location = BotLocation::Lobby;
+    }
+}
+
+pub trait AiFunctionality {
+    async fn run_agent_loop(
+        &self,
+        ai_client: &crate::agent::openai_client::OpenAIClient,
+        prompt: &str,
+        username: &str,
+        tools_map: ToolMap<'_>,
+    );
+}
+
+impl AiFunctionality for Client {
+    async fn run_agent_loop(
+        &self,
+        ai_client: &crate::agent::openai_client::OpenAIClient,
+        prompt: &str,
+        username: &str,
+        tools: ToolMap<'_>,
+    ) {
+        let bot = self;
+        let message = prompt;
+        let system_promt = ChatCompletionMessageParam {
+            content: SYSTEM_PROMPT.into(),
+            role: crate::agent::openai_client::AIChatRole::System,
+        };
+        let should_stop_agent_loop = Arc::new(Mutex::new(false));
+        let tools_map = tools.register_tool(StopAgentLoop::new(
             should_stop_agent_loop.clone(),
             username,
             bot,
-        ))
-        .register_tool(Sleep::new(state))
-        .register_tool(SendPartyMessage::new(bot, state))
-        .register_tool(LeaveParty::new(bot))
-        .register_tool(GetPartyInfo::new(bot, state))
-        .register_tool(AddFriend::new(bot))
-        .register_tool(RemoveFriend::new(bot));
+        ));
 
-    let mut messages = Vec::new();
-    messages.push(system_promt);
-    if message.starts_with("/agent") {
+        let mut messages = Vec::new();
+        messages.push(system_promt);
         let user_message = ChatCompletionMessageParam {
-            content: message
-                .strip_prefix("/agent")
-                .unwrap_or_default()
-                .to_string(),
+            content: message.to_string(),
             role: crate::agent::openai_client::AIChatRole::User,
         };
         messages.push(user_message);
@@ -372,47 +429,6 @@ async fn handle_ai_admin_dm(
 
             println!("[LLM] we sent messages: \n\n{messages:#?}");
         }
-    }
-}
-
-async fn notify_roby_join() {
-    let client = reqwest::Client::new();
-    let body = r##"{"content": "# 📡 **ENTRY DETECTED** <@&1151557434494681139>\n\n### 👤 **User:** `Roby98`\n\n### 🟢 **Status:** `CONNECTED`\n\n> **Note:** The target user **Roby98** has just joined the server!!!"}"##;
-    if let Err(e) = client.post("REDACTED").body(body).header("Content-Type", "application/json").send().await {
-        eprintln!("failed sending webhook: {e:#?}");
-    }
-}
-
-async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket, state: &State) {
-    let pwd = &ENV_VARS.password;
-    if message
-        .message()
-        .to_string()
-        .trim()
-        .contains("CORALMC » Per favore, esegui la registrazione con il comando: /register [password] [confermaPassword]")
-    {
-        eprintln!("registering...");
-        bot.chat(format!("/register {pwd} {pwd}"));
-    }
-    if message
-        .message()
-        .to_string()
-        .trim()
-        .contains("CORALMC » Per favore, esegui l'autenticazione con il comando: /login [password]")
-    {
-        eprintln!("logging in...");
-        bot.chat(format!("/login {pwd}"));
-    }
-
-    if message
-        .message()
-        .to_string()
-        .trim()
-        .contains("Login eseguito con successo.")
-    {
-        eprintln!("setting location to lobby...");
-        let mut location = state.location.lock().await;
-        *location = BotLocation::Lobby;
     }
 }
 
