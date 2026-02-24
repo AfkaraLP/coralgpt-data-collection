@@ -87,23 +87,30 @@ impl OpenAIClient {
 
     pub async fn compact_history(&self, messages: &[ChatCompletionMessageParam]) -> Option<String> {
         let system_prompt: String = "You are a conversation summarizer. Given a conversation between a user and an LLM, produce a compact user prompt that gives the LLM enough context to seamlessly continue from where the conversation left off. Preserve key decisions, unresolved questions, current state, and any relevant artifacts or code.".into();
-        let history = messages
+        let mut history = messages
             .iter()
             .filter(|m| m.role != AIChatRole::System)
-            .fold(String::new(), |mut acc, m| {
-                _ = writeln!(&mut acc, "role: {:#?}\ncontent: {}\n\n", m.role, m.content);
-                acc
-            });
+            .collect::<Vec<&ChatCompletionMessageParam>>();
+        history.dedup_by(|a, b| a.content == b.content);
+        let history = history.iter().fold(String::new(), |mut acc, m| {
+            _ = writeln!(
+                &mut acc,
+                "role: {:#?}\ncontent: {}\n\n",
+                m.role,
+                m.content.trim()
+            );
+            acc
+        });
         let mut first_user_message = messages
             .iter()
             .find_map(|m| {
                 if m.role.eq(&AIChatRole::User) {
-                    Some(m.content.clone())
+                    Some(m.content.trim())
                 } else {
                     None
                 }
             })
-            .unwrap_or("could not get initial user request, act based on the history".into());
+            .unwrap_or("could not get initial user request, act based on the history");
         let compacted = self
             .get_completion(
                 &[
@@ -130,8 +137,8 @@ impl OpenAIClient {
             first_user_message = first_user_message
                 .split_once("now based on that continue fulfilling the initial request:")
                 .map_or(
-                    "Failed truncating old usermessage, infer purpose from context".into(),
-                    |v| v.1.to_string(),
+                    "Failed truncating old usermessage, infer purpose from context",
+                    |v| v.1.trim(),
                 );
         }
         Some(format!(

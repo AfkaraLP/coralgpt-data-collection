@@ -17,9 +17,9 @@ use tokio::{sync::mpsc::Sender, time};
 use crate::ENV_VARS;
 use crate::agent::openai_client::{ChatCompletionMessageParam, ToolMap};
 use crate::bot::tools::{
-    AddFriend, GetInventory, GetPartyInfo, InviteParty, JoinParty, LeaveParty, ReadChatHistory,
-    ReadTabList, RemoveFriend, RespondToUser, SelectHotbarSlot, SendChatMessage, SendDirectMessage,
-    SendPartyMessage, Sleep, StopAgentLoop,
+    AddFriend, GetInventory, GetPartyInfo, GetStats, InviteParty, JoinParty, LeaveParty,
+    ReadChatHistory, ReadTabList, RemoveFriend, RespondToUser, SelectHotbarSlot, SendChatMessage,
+    SendDirectMessage, SendPartyMessage, Sleep, StopAgentLoop,
 };
 use crate::{State, message::Message, server::WsServerMessage};
 
@@ -268,6 +268,7 @@ async fn handle_ai_admin_dm(
     let should_stop_agent_loop = Arc::new(Mutex::new(false));
     let tools_map = ToolMap::new()
         .register_tool(SendDirectMessage::new(bot, state))
+        .register_tool(GetStats::new(bot, state))
         .register_tool(ReadChatHistory::new(state))
         .register_tool(ReadTabList::new(bot))
         .register_tool(SendChatMessage::new(bot, state))
@@ -276,7 +277,11 @@ async fn handle_ai_admin_dm(
         .register_tool(SelectHotbarSlot::new(bot))
         .register_tool(JoinParty::new(bot))
         .register_tool(InviteParty::new(bot))
-        .register_tool(StopAgentLoop::new(should_stop_agent_loop.clone()))
+        .register_tool(StopAgentLoop::new(
+            should_stop_agent_loop.clone(),
+            username,
+            bot,
+        ))
         .register_tool(Sleep::new(state))
         .register_tool(SendPartyMessage::new(bot, state))
         .register_tool(LeaveParty::new(bot))

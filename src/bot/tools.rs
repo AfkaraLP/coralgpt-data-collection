@@ -466,15 +466,15 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
     }
 }
 
-pub struct StopAgentLoop(Arc<Mutex<bool>>);
+pub struct StopAgentLoop<'a, 'b>(Arc<Mutex<bool>>, &'a str, &'b Client);
 
-impl StopAgentLoop {
-    pub fn new(should_stop: Arc<Mutex<bool>>) -> Self {
-        Self(should_stop)
+impl<'a, 'b> StopAgentLoop<'a, 'b> {
+    pub fn new(mutex: Arc<Mutex<bool>>, username: &'a str, client: &'b Client) -> Self {
+        Self(mutex, username, client)
     }
 }
 
-impl ToolCallFn for StopAgentLoop {
+impl ToolCallFn for StopAgentLoop<'_, '_> {
     fn get_name(&self) -> &'static str {
         "stop_agent_loop"
     }
@@ -485,6 +485,9 @@ impl ToolCallFn for StopAgentLoop {
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
         let should_stop = self.0.clone();
+        let username = self.1;
+        self.2
+            .chat(format!("/msg {username} Stopping Agent Loop..."));
         Box::pin(async move {
             let mut should_stop = should_stop.lock().await;
             *should_stop = true;
@@ -808,6 +811,56 @@ impl ToolCallFn for RemoveFriend<'_> {
             "username",
             crate::agent::tool::ToolCallArgType::String,
             "the username of the player to remove from friends",
+        )]
+    }
+}
+
+pub struct GetStats<'a, 'b>(&'a Client, &'b State);
+
+impl<'a, 'b> GetStats<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
+    }
+}
+
+impl ToolCallFn for GetStats<'_, '_> {
+    fn get_name(&self) -> &'static str {
+        "get_stats"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "get the bedwars stats of a player"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let Some(serde_json::Value::String(username)) = args.get("username") else {
+            return "please provide a username string for whose stats to get".into_pin_box_string();
+        };
+        self.0.chat(format!("/stats {username}"));
+        let past_messages = self.1.messages.clone();
+        Box::pin(async move {
+            let past_messages =
+                past_messages
+                    .lock()
+                    .await
+                    .iter()
+                    .take(10)
+                    .fold(String::new(), |mut acc, v| {
+                        _ = writeln!(&mut acc, "{v}");
+                        acc
+                    });
+            format!(
+                "Sent stats request, here is the chat history after the request:\n {past_messages}"
+            )
+        })
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor::new(
+            true,
+            "username",
+            crate::agent::tool::ToolCallArgType::String,
+            "the username of the player whose stats to get",
         )]
     }
 }
