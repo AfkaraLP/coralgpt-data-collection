@@ -2,7 +2,7 @@ pub mod tools;
 
 use std::fmt::Write;
 use std::panic::AssertUnwindSafe;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use azalea::container::ContainerHandle;
@@ -11,13 +11,18 @@ use azalea::{
     registry::builtin::ItemKind,
 };
 use regex::Regex;
+use tokio::sync::Mutex;
 use tokio::{sync::mpsc::Sender, time};
 
 use crate::ENV_VARS;
 use crate::agent::openai_client::{ChatCompletionMessageParam, ToolMap};
-use crate::bot::tools::{ReadChatHistory, ReadTabList, RespondToUser, SendChatMessage};
+use crate::bot::tools::{
+    GetInventory, InviteParty, JoinParty, ReadChatHistory, ReadTabList, RespondToUser,
+    SelectHotbarSlot, SendChatMessage, SendDirectMessage, Sleep, StopAgentLoop,
+};
 use crate::{State, message::Message, server::WsServerMessage};
 
+const SYSTEM_PROMPT: &str = include_str!("SYSTEM_PROMPT.txt");
 #[derive(Default, Clone, Component)]
 pub enum Instruction {
     Chat(String),
@@ -215,7 +220,7 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
             && let Some(message) = &captures.get(2)
             && ["Afkara", "NickAc", "8hi"].contains(&username.as_str())
         {
-            handle_admin_dm(message.as_str(), username.as_str(), bot, state).await;
+            handle_admin_dm(message.as_str().trim(), username.as_str(), bot, state).await;
         }
     }
     if message.contains("Roby98 è entrato nella lobby.") {
@@ -243,80 +248,117 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
 
 async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &State) {
     if let Some(ai_client) = &ENV_VARS.openai_client {
-        let system_promt = ChatCompletionMessageParam {
-            content: "You are in control of a minceraft bot".into(),
-            role: crate::agent::openai_client::AIChatRole::System,
+        handle_ai_admin_dm(message, username, bot, state, ai_client).await;
+    }
+}
+
+async fn handle_ai_admin_dm(
+    message: &str,
+    username: &str,
+    bot: &Client,
+    state: &State,
+    ai_client: &crate::agent::openai_client::OpenAIClient,
+) {
+    let system_promt = ChatCompletionMessageParam {
+        content: SYSTEM_PROMPT.into(),
+        role: crate::agent::openai_client::AIChatRole::System,
+    };
+    let should_stop_agent_loop = Arc::new(Mutex::new(false));
+    let tools_map = ToolMap::new()
+        .register_tool(SendDirectMessage::new(bot, state))
+        .register_tool(ReadChatHistory::new(state))
+        .register_tool(ReadTabList::new(bot))
+        .register_tool(SendChatMessage::new(bot, state))
+        .register_tool(RespondToUser::new(bot, username, state))
+        .register_tool(GetInventory::new(bot))
+        .register_tool(SelectHotbarSlot::new(bot))
+        .register_tool(JoinParty::new(bot))
+        .register_tool(InviteParty::new(bot))
+        .register_tool(StopAgentLoop::new(should_stop_agent_loop.clone()))
+        .register_tool(Sleep::new(state));
+
+    let mut messages = Vec::new();
+    messages.push(system_promt);
+    if message.starts_with("/agent") {
+        let user_message = ChatCompletionMessageParam {
+            content: message
+                .strip_prefix("/agent")
+                .unwrap_or_default()
+                .to_string(),
+            role: crate::agent::openai_client::AIChatRole::User,
         };
-        // TODO: register tools
-        let tools_map = ToolMap::new()
-            .register_tool(ReadTabList::new(bot))
-            .register_tool(SendChatMessage::new(bot))
-            .register_tool(RespondToUser::new(bot, username))
-            .register_tool(ReadChatHistory::new(state));
-        let mut messages = Vec::new();
-        messages.push(system_promt);
-        if message.starts_with("/agent") {
-            let mut tools_call_count = 0_usize;
-            let user_message = ChatCompletionMessageParam {
-                content: message
-                    .strip_prefix("/agent")
-                    .unwrap_or_default()
-                    .to_string(),
-                role: crate::agent::openai_client::AIChatRole::User,
-            };
-            messages.push(user_message);
+        messages.push(user_message);
 
-            loop {
-                let comp = ai_client.get_completion(&messages, &tools_map).await;
-                let Ok(completion) = comp else {
-                    break;
-                };
-                let Some(first) = completion.choices.first() else {
-                    break;
-                };
-                let Some(ref tool_calls) = first.message.tool_calls else {
-                    break;
-                };
-                if tool_calls.is_empty() {
-                    eprintln!(
-                        "Assistant:\n\n{}",
-                        first
-                            .message
-                            .content
-                            .as_ref()
-                            .unwrap_or(&String::from("couldn't respond to request"))
-                    );
-                    break;
-                }
-
-                tools_call_count += 1;
-                if tools_call_count > 20 {
-                    eprintln!("breaking because max toolcalls of 20 has been reached");
-                    break;
-                }
-                let mut tool_responses = String::new();
-                for tool_call in tool_calls {
-                    if let Some(tool) = tools_map.get(&tool_call.function.name) {
-                        let answer = tool
-                            .invoke(
-                                &serde_json::from_str(&tool_call.function.arguments)
-                                    .unwrap_or_default(),
-                            )
-                            .await;
-                        tokio::time::sleep(tool.get_timeout_wait()).await;
-                        _ = writeln!(
-                            &mut tool_responses,
-                            "tool({}) output: \n\n{answer}",
-                            tool.get_name()
-                        );
+        while !*should_stop_agent_loop.lock().await {
+            if messages.len() > 15 {
+                let mut compaction_its = 0_usize;
+                let compacted = loop {
+                    if let Some(compacted) = ai_client.compact_history(&messages).await {
+                        break compacted;
                     }
+                    if compaction_its > 10 {
+                        break messages
+                            .get(1)
+                            .map_or("just stop and message me you stopped".into(), |v| {
+                                v.content.clone()
+                            });
+                    }
+                    compaction_its += 1;
+                };
+                messages = vec![
+                    ChatCompletionMessageParam {
+                        content: SYSTEM_PROMPT.to_string(),
+                        role: crate::agent::openai_client::AIChatRole::System,
+                    },
+                    ChatCompletionMessageParam {
+                        content: compacted,
+                        role: crate::agent::openai_client::AIChatRole::User,
+                    },
+                ];
+            }
+            let comp = ai_client.get_completion(&messages, &tools_map).await;
+            let Ok(completion) = comp else {
+                break;
+            };
+            let Some(first) = completion.choices.first() else {
+                break;
+            };
+            let Some(ref tool_calls) = first.message.tool_calls else {
+                break;
+            };
+            let agent_response_content = first.message.content.clone().unwrap_or_default();
+            if !agent_response_content.is_empty() || tool_calls.is_empty() {
+                messages.push(ChatCompletionMessageParam {
+                    content: agent_response_content,
+                    role: crate::agent::openai_client::AIChatRole::Assistant,
+                });
+            }
+
+            let mut tool_responses = String::new();
+            for tool_call in tool_calls {
+                if let Some(tool) = tools_map.get(&tool_call.function.name) {
+                    let answer = tool
+                        .invoke(
+                            &serde_json::from_str(&tool_call.function.arguments)
+                                .unwrap_or_default(),
+                        )
+                        .await;
+                    tokio::time::sleep(tool.get_timeout_wait()).await;
+                    _ = writeln!(
+                        &mut tool_responses,
+                        "tool({}) output: \n\n{answer}",
+                        tool.get_name()
+                    );
                 }
+            }
+            if !tool_responses.is_empty() {
                 messages.push(ChatCompletionMessageParam {
                     content: tool_responses,
                     role: crate::agent::openai_client::AIChatRole::Tool,
                 });
-                println!("[LLM] we sent messages: \n\n{messages:#?}");
             }
+
+            println!("[LLM] we sent messages: \n\n{messages:#?}");
         }
     }
 }

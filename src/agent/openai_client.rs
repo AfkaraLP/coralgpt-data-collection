@@ -2,6 +2,7 @@ use std::collections::{HashMap, hash_map::Values};
 
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 
 use crate::agent::tool::ToolCallFn;
 
@@ -83,6 +84,51 @@ impl OpenAIClient {
         serde_json::from_str(&res_str)
             .map_err(|e| anyhow!("yeah thing serialisation this is very likely the issue: {e:#?}"))
     }
+
+    pub async fn compact_history(&self, messages: &[ChatCompletionMessageParam]) -> Option<String> {
+        let system_prompt: String = "You are a conversation summarizer. Given a conversation between a user and an LLM, produce a compact user prompt that gives the LLM enough context to seamlessly continue from where the conversation left off. Preserve key decisions, unresolved questions, current state, and any relevant artifacts or code.".into();
+        let history = messages
+            .iter()
+            .filter(|m| m.role != AIChatRole::System)
+            .fold(String::new(), |mut acc, m| {
+                _ = writeln!(&mut acc, "role: {:#?}\ncontent: {}\n\n", m.role, m.content);
+                acc
+            });
+        let first_user_message = messages
+            .iter()
+            .find_map(|m| {
+                if m.role.eq(&AIChatRole::User) {
+                    Some(m.content.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("could not get initial user request, act based on the history".into());
+        let compacted = self
+            .get_completion(
+                &[
+                    ChatCompletionMessageParam {
+                        content: system_prompt,
+                        role: AIChatRole::System,
+                    },
+                    ChatCompletionMessageParam {
+                        content: history,
+                        role: AIChatRole::User,
+                    },
+                ],
+                &ToolMap::new(),
+            )
+            .await
+            .ok()?
+            .choices
+            .first()?
+            .message
+            .clone()
+            .content?;
+        Some(format!(
+            "this is the history of your previous actions compacted: \n\n {compacted} \n now based on that continue fulfilling the initial request: \n\n {first_user_message}"
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,7 +144,7 @@ pub struct ChatCompletionMessageParam {
     pub role: AIChatRole,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AIChatRole {
     #[serde(rename = "user")]
     User,
@@ -126,6 +172,7 @@ pub struct ChatCompletionResponseMessage {
     pub role: AIChatRole,
     pub content: Option<String>,
     pub tool_calls: Option<Vec<ToolInvocation>>,
+    pub reasoning: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
