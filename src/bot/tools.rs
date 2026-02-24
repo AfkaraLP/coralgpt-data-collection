@@ -11,7 +11,7 @@ pub trait IntoPinBoxString<'a>: Sized + Send + ToString + 'a {
 impl<'a, T: Sized + Send + ToString + 'a> IntoPinBoxString<'a> for T {}
 
 use crate::{
-    ENV_VARS, State,
+    State,
     agent::tool::{ToolCallArgDescriptor, ToolCallFn},
 };
 
@@ -248,12 +248,6 @@ impl ToolCallFn for ReadChatHistory<'_> {
                 .iter()
                 .take(num_messages.try_into().unwrap_or(20))
                 .fold(String::new(), |mut acc, v| {
-                    let message = v.to_string();
-                    if message.contains("/agent")
-                        || message.contains(&format!("{}:", &ENV_VARS.username))
-                    {
-                        return acc;
-                    }
                     _ = writeln!(&mut acc, "{v}");
                     acc
                 })
@@ -521,7 +515,7 @@ impl ToolCallFn for GetInventory<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "get your current inventory"
+        "get your current inventory, counts top down, left to right meaning the hotbar starts at slot 36"
     }
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -597,5 +591,223 @@ impl ToolCallFn for SelectHotbarSlot<'_> {
 
     fn get_timeout_wait(&self) -> std::time::Duration {
         std::time::Duration::from_millis(0)
+    }
+}
+
+pub struct SendPartyMessage<'a, 'b>(&'a Client, &'b State);
+
+impl<'a, 'b> SendPartyMessage<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
+    }
+}
+
+impl ToolCallFn for SendPartyMessage<'_, '_> {
+    fn get_name(&self) -> &'static str {
+        "send_party_message"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "send a message to party chat only"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let Some(serde_json::Value::String(message)) = args.get("message") else {
+            return "please provide a message to send to the party".into_pin_box_string();
+        };
+        let message = message.clone();
+        let bot = self.0.clone();
+        let past_messages = self.1.messages.clone();
+        Box::pin(async move {
+            if message.chars().count() > 100 {
+                let message = message.chars().take(100).collect::<String>();
+                bot.chat(format!("/pc {message}"));
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                let chat_history =
+                    past_messages
+                        .lock()
+                        .await
+                        .iter()
+                        .take(10)
+                        .fold(String::new(), |mut acc, s| {
+                            _ = writeln!(&mut acc, "{s}");
+                            acc
+                        });
+                return format!(
+                    "# Message truncated to 100 chars, sent to party. past messages: {chat_history}"
+                );
+            }
+            bot.chat(format!("/pc {message}"));
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let chat_history =
+                past_messages
+                    .lock()
+                    .await
+                    .iter()
+                    .take(10)
+                    .fold(String::new(), |mut acc, s| {
+                        _ = writeln!(&mut acc, "{s}");
+                        acc
+                    });
+            format!("# Successfully sent to party chat. past messages:\n{chat_history}")
+        })
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor::new(
+            true,
+            "message",
+            crate::agent::tool::ToolCallArgType::String,
+            "the message to send to party chat, max 100 characters",
+        )]
+    }
+
+    fn get_timeout_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(200)
+    }
+}
+
+pub struct LeaveParty<'a>(&'a Client);
+
+impl<'a> LeaveParty<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self(client)
+    }
+}
+
+impl ToolCallFn for LeaveParty<'_> {
+    fn get_name(&self) -> &'static str {
+        "leave_party"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "leave your current party"
+    }
+
+    fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        self.0.chat("/p leave");
+        "sent leave party command".into_pin_box_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        Vec::new()
+    }
+
+    fn get_timeout_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(200)
+    }
+}
+
+pub struct GetPartyInfo<'a, 'b>(&'a Client, &'b State);
+
+impl<'a, 'b> GetPartyInfo<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
+    }
+}
+
+impl ToolCallFn for GetPartyInfo<'_, '_> {
+    fn get_name(&self) -> &'static str {
+        "get_party_info"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "get information about your current party"
+    }
+
+    fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let bot = self.0.clone();
+        let message_queue = self.1.messages.clone();
+        Box::pin(async move {
+            bot.chat("/p info");
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = message_queue.lock().await.iter().take(10).fold(
+                String::new(),
+                |mut acc, message| {
+                    _ = writeln!(&mut acc, "{message}");
+                    acc
+                },
+            );
+
+            format!("# requested party info, check chat for details: \n\n{past_messages}")
+        })
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        Vec::new()
+    }
+
+    fn get_timeout_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(500)
+    }
+}
+
+pub struct AddFriend<'a>(&'a Client);
+
+impl<'a> AddFriend<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self(client)
+    }
+}
+
+impl ToolCallFn for AddFriend<'_> {
+    fn get_name(&self) -> &'static str {
+        "add_friend"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "send a friend request to a player"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let Some(serde_json::Value::String(username)) = args.get("username") else {
+            return "please provide a username to add as friend".into_pin_box_string();
+        };
+        self.0.chat(format!("/f add {username}"));
+        format!("sent friend request to {username}").into_pin_box_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor::new(
+            true,
+            "username",
+            crate::agent::tool::ToolCallArgType::String,
+            "the username of the player to add as friend",
+        )]
+    }
+}
+
+pub struct RemoveFriend<'a>(&'a Client);
+
+impl<'a> RemoveFriend<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self(client)
+    }
+}
+
+impl ToolCallFn for RemoveFriend<'_> {
+    fn get_name(&self) -> &'static str {
+        "remove_friend"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "remove a player from your friends list"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let Some(serde_json::Value::String(username)) = args.get("username") else {
+            return "please provide a username to remove from friends".into_pin_box_string();
+        };
+        self.0.chat(format!("/f remove {username}"));
+        format!("removed {username} from friends").into_pin_box_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor::new(
+            true,
+            "username",
+            crate::agent::tool::ToolCallArgType::String,
+            "the username of the player to remove from friends",
+        )]
     }
 }

@@ -94,7 +94,7 @@ impl OpenAIClient {
                 _ = writeln!(&mut acc, "role: {:#?}\ncontent: {}\n\n", m.role, m.content);
                 acc
             });
-        let first_user_message = messages
+        let mut first_user_message = messages
             .iter()
             .find_map(|m| {
                 if m.role.eq(&AIChatRole::User) {
@@ -125,6 +125,15 @@ impl OpenAIClient {
             .message
             .clone()
             .content?;
+        if first_user_message.contains("now based on that continue fulfilling the initial request:")
+        {
+            first_user_message = first_user_message
+                .split_once("now based on that continue fulfilling the initial request:")
+                .map_or(
+                    "Failed truncating old usermessage, infer purpose from context".into(),
+                    |v| v.1.to_string(),
+                );
+        }
         Some(format!(
             "this is the history of your previous actions compacted: \n\n {compacted} \n now based on that continue fulfilling the initial request: \n\n {first_user_message}"
         ))
