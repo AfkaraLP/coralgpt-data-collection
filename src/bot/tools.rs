@@ -1,6 +1,13 @@
-use azalea::Client;
-use std::{fmt::Write, pin::Pin, sync::Arc};
-use tokio::sync::Mutex;
+#![allow(clippy::cast_precision_loss)]
+
+use azalea::{
+    BlockPos, Client, Vec3,
+    pathfinder::{PathfinderOpts, goals::BlockPosGoal},
+    prelude::PathfinderClientExt,
+};
+use std::{fmt::Write, pin::Pin, sync::Arc, time::Duration};
+use tokio::{sync::Mutex, time::Instant};
+const ONE_POINT_EIGHT_MIN_Y: i32 = 0;
 
 pub trait IntoPinBoxString<'a>: Sized + Send + ToString + 'a {
     fn into_pin_box_string(self) -> Pin<Box<dyn Future<Output = String> + Send + 'a>> {
@@ -13,6 +20,7 @@ impl<'a, T: Sized + Send + ToString + 'a> IntoPinBoxString<'a> for T {}
 use crate::{
     State,
     agent::tool::{ToolCallArgDescriptor, ToolCallFn},
+    is_spam_message,
 };
 
 pub struct SendChatMessage<'a, 'b>(&'a Client, &'b State);
@@ -45,49 +53,38 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
         &self,
         args: &serde_json::Value,
     ) -> std::pin::Pin<Box<dyn Future<Output = String> + Send>> {
-        let Some(message_val) = args.get("message") else {
+        let Some(serde_json::Value::String(message)) = args.get("message") else {
             return "please provide a \"message\" field in the tool call".into_pin_box_string();
         };
-        let serde_json::Value::String(message) = message_val else {
-            return "message has to be of type string".into_pin_box_string();
+        let mut response = String::new();
+        let message = if message.chars().count() > 100 {
+            response
+                .push_str("Message was too long, truncated to 100 characters. past messages: \n\n");
+            message.chars().take(100).collect::<String>()
+        } else {
+            response.push_str("Sent message. past messages: \n\n");
+            message.clone()
         };
         let past_messages = self.1.messages.clone();
-        let bot = self.0.clone();
-        let response_message = message.clone();
+        self.0.chat(message);
         Box::pin(async move {
-            if response_message.chars().count() > 100 {
-                let response_message = response_message.chars().take(100).collect::<String>();
-                bot.chat(response_message);
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                let past_messages =
-                    past_messages
-                        .lock()
-                        .await
-                        .iter()
-                        .take(10)
-                        .fold(String::new(), |mut acc, s| {
-                            _ = writeln!(&mut acc, "{s}");
-                            acc
-                        });
-                return format!(
-                    "# Truncated message as it was too long, here is chat history with sent message: \n{past_messages}",
-                );
-            }
-            bot.chat(response_message);
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let past_messages =
-                past_messages
-                    .lock()
-                    .await
-                    .iter()
-                    .take(10)
-                    .fold(String::new(), |mut acc, s| {
-                        _ = writeln!(&mut acc, "{s}");
-                        acc
-                    });
-            format!(
-                "# Successfully sent message, here is chat history with sent message: \n{past_messages}",
-            )
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(8)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, s| {
+                    _ = writeln!(&mut acc, "{s}");
+                    acc
+                });
+            response.push_str(&past_messages);
+            response
         })
     }
 
@@ -129,42 +126,36 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
         let serde_json::Value::String(message) = message_val else {
             return "message has to be of type string".into_pin_box_string();
         };
-        let message = message.clone();
-        let bot = self.0.clone();
+        let mut response = String::new();
+        let message = if message.chars().count() > 100 {
+            response
+                .push_str("Message was too long, truncated to 100 characters. past messages: \n\n");
+            message.chars().take(100).collect::<String>()
+        } else {
+            response.push_str("Sent message. past messages: \n\n");
+            message.clone()
+        };
         let username = self.1.to_string();
         let past_messages = self.2.messages.clone();
+        self.0.chat(format!("/msg {username} {message}"));
         Box::pin(async move {
-            if message.chars().count() > 100 {
-                let message = message.chars().take(100).collect::<String>();
-                bot.chat(format!("/msg {username} {message}"));
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                let past_messages =
-                    past_messages
-                        .lock()
-                        .await
-                        .iter()
-                        .take(10)
-                        .fold(String::new(), |mut acc, s| {
-                            _ = writeln!(&mut acc, "{s}");
-                            acc
-                        });
-                return format!(
-                    "message too long, truncating to 100 chars and sending anyway, new chat: \n\n{past_messages}",
-                );
-            }
-            bot.chat(format!("/msg {username} {message}"));
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let past_messages =
-                past_messages
-                    .lock()
-                    .await
-                    .iter()
-                    .take(10)
-                    .fold(String::new(), |mut acc, s| {
-                        _ = writeln!(&mut acc, "{s}");
-                        acc
-                    });
-            format!("successfully sent message, new chat: \n\n{past_messages}")
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(5)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, s| {
+                    _ = writeln!(&mut acc, "{s}");
+                    acc
+                });
+            response.push_str(&past_messages);
+            response
         })
     }
 }
@@ -222,12 +213,20 @@ impl ToolCallFn for ReadChatHistory<'_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            false,
-            "count",
-            crate::agent::tool::ToolCallArgType::Number,
-            "how many past messages to load",
-        )]
+        vec![
+            ToolCallArgDescriptor::new(
+                false,
+                "count",
+                crate::agent::tool::ToolCallArgType::Number,
+                "how many past messages to load",
+            ),
+            ToolCallArgDescriptor::new(
+                false,
+                "verbose",
+                crate::agent::tool::ToolCallArgType::Bool,
+                "whether to also show server announcements and join messages",
+            ),
+        ]
     }
 
     fn get_timeout_wait(&self) -> std::time::Duration {
@@ -240,12 +239,18 @@ impl ToolCallFn for ReadChatHistory<'_> {
 
             _ => 20,
         };
+        let verbose = args
+            .get("verbose")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         let msg_q = self.0.messages.clone();
         Box::pin(async move {
             msg_q
                 .lock()
                 .await
                 .iter()
+                .map(ToString::to_string)
+                .filter(|v| verbose || !is_spam_message(v))
                 .take(num_messages.try_into().unwrap_or(20))
                 .fold(String::new(), |mut acc, v| {
                     _ = writeln!(&mut acc, "{v}");
@@ -278,16 +283,24 @@ impl ToolCallFn for Sleep<'_> {
                 if let Some(num) = num.as_u64() {
                     let message_state = self.0.messages.clone();
                     Box::pin(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(num)).await;
-                        let past_messages = message_state.lock().await.iter().take(20).fold(
-                            String::new(),
-                            |mut acc, s| {
+                        tokio::time::sleep(std::time::Duration::from_secs(num)).await;
+
+                        let past_messages = message_state
+                            .lock()
+                            .await
+                            .iter()
+                            .map(ToString::to_string)
+                            .filter(|v| !is_spam_message(v))
+                            .take(15)
+                            .collect::<Vec<String>>()
+                            .iter()
+                            .rev()
+                            .fold(String::new(), |mut acc, s| {
                                 _ = writeln!(&mut acc, "{s}");
                                 acc
-                            },
-                        );
+                            });
                         format!(
-                            "# slept for {num} milliseconds, past 20 chat messages:\n {past_messages}"
+                            "# slept for {num} seconds, past few chat messages:\n {past_messages}"
                         )
                     })
                 } else {
@@ -303,7 +316,7 @@ impl ToolCallFn for Sleep<'_> {
             true,
             "time",
             crate::agent::tool::ToolCallArgType::Number,
-            "time to sleep in milliseconds as an unsigned integer",
+            "time to sleep in seconds as an unsigned integer",
         )]
     }
 
@@ -405,46 +418,36 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
         let Some(serde_json::Value::String(message)) = args.get("message") else {
             return "please provide a message to send to the user".into_pin_box_string();
         };
-        let bot = self.0.clone();
         let message_state = self.1.messages.clone();
-        let message = message.clone();
+        let mut response = String::new();
+        let message = if message.chars().count() > 100 {
+            response
+                .push_str("Message was too long, truncated to 100 characters. past messages: \n\n");
+            message.chars().take(100).collect::<String>()
+        } else {
+            response.push_str("Sent message. past messages: \n\n");
+            message.clone()
+        };
         let username = username.clone();
+        self.0.chat(format!("/msg {username} {message}"));
         Box::pin(async move {
-            if message.chars().count() > 100 {
-                bot.chat(format!(
-                    "/msg {username} {}",
-                    message.chars().take(100).collect::<String>()
-                ));
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                let past_messages =
-                    message_state
-                        .lock()
-                        .await
-                        .iter()
-                        .take(10)
-                        .fold(String::new(), |mut acc, s| {
-                            _ = writeln!(&mut acc, "{s}");
-                            acc
-                        });
-                return format!(
-                    "# had to truncate message as it was 100+ characters, here is chat history: \n{past_messages}"
-                );
-            }
-            bot.chat(format!("/msg {username} {message}",));
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let past_messages =
-                message_state
-                    .lock()
-                    .await
-                    .iter()
-                    .take(10)
-                    .fold(String::new(), |mut acc, s| {
-                        _ = writeln!(&mut acc, "{s}");
-                        acc
-                    });
-            format!(
-                "# Successfully sent message, had to truncate, here is chat histor: \n {past_messages}"
-            )
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = message_state
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(10)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, s| {
+                    _ = writeln!(&mut acc, "{s}");
+                    acc
+                });
+            response.push_str(&past_messages);
+            response
         })
     }
 
@@ -619,40 +622,35 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
             return "please provide a message to send to the party".into_pin_box_string();
         };
         let message = message.clone();
-        let bot = self.0.clone();
         let past_messages = self.1.messages.clone();
+        let mut response = String::new();
+        let message = if message.chars().count() > 100 {
+            response
+                .push_str("Message was too long, truncated to 100 characters. past messages: \n\n");
+            message.chars().take(100).collect::<String>()
+        } else {
+            response.push_str("Sent message. past messages: \n\n");
+            message
+        };
+        self.0.chat(format!("/pc {message}"));
         Box::pin(async move {
-            if message.chars().count() > 100 {
-                let message = message.chars().take(100).collect::<String>();
-                bot.chat(format!("/pc {message}"));
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                let chat_history =
-                    past_messages
-                        .lock()
-                        .await
-                        .iter()
-                        .take(10)
-                        .fold(String::new(), |mut acc, s| {
-                            _ = writeln!(&mut acc, "{s}");
-                            acc
-                        });
-                return format!(
-                    "# Message truncated to 100 chars, sent to party. past messages: {chat_history}"
-                );
-            }
-            bot.chat(format!("/pc {message}"));
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let chat_history =
-                past_messages
-                    .lock()
-                    .await
-                    .iter()
-                    .take(10)
-                    .fold(String::new(), |mut acc, s| {
-                        _ = writeln!(&mut acc, "{s}");
-                        acc
-                    });
-            format!("# Successfully sent to party chat. past messages:\n{chat_history}")
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let chat_history = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(5)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, s| {
+                    _ = writeln!(&mut acc, "{s}");
+                    acc
+                });
+            response.push_str(&chat_history);
+            response
         })
     }
 
@@ -719,18 +717,24 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
     }
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
-        let bot = self.0.clone();
+        self.0.chat("/p info");
         let message_queue = self.1.messages.clone();
         Box::pin(async move {
-            bot.chat("/p info");
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let past_messages = message_queue.lock().await.iter().take(10).fold(
-                String::new(),
-                |mut acc, message| {
+            let past_messages = message_queue
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(6)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, message| {
                     _ = writeln!(&mut acc, "{message}");
                     acc
-                },
-            );
+                });
 
             format!("# requested party info, check chat for details: \n\n{past_messages}")
         })
@@ -839,16 +843,21 @@ impl ToolCallFn for GetStats<'_, '_> {
         self.0.chat(format!("/stats {username}"));
         let past_messages = self.1.messages.clone();
         Box::pin(async move {
-            let past_messages =
-                past_messages
-                    .lock()
-                    .await
-                    .iter()
-                    .take(10)
-                    .fold(String::new(), |mut acc, v| {
-                        _ = writeln!(&mut acc, "{v}");
-                        acc
-                    });
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(10)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, v| {
+                    _ = writeln!(&mut acc, "{v}");
+                    acc
+                });
             format!(
                 "Sent stats request, here is the chat history after the request:\n {past_messages}"
             )
@@ -862,5 +871,506 @@ impl ToolCallFn for GetStats<'_, '_> {
             crate::agent::tool::ToolCallArgType::String,
             "the username of the player whose stats to get",
         )]
+    }
+}
+
+pub struct GetNearbyBlocks<'a>(&'a Client);
+
+impl<'a> GetNearbyBlocks<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self(client)
+    }
+}
+
+impl ToolCallFn for GetNearbyBlocks<'_> {
+    fn get_name(&self) -> &'static str {
+        "get_nearby_blocks"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "get the blocks that are near you"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let radius = |name, default| {
+            args.get(name)
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(default)
+        };
+
+        let z_radius = radius("z_radius", 3);
+        let x_radius = radius("x_radius", 5);
+        let y_radius = radius("y_radius", 5);
+
+        let requested_block = args
+            .get("block_type")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(|v| format!("minecraft:{v}"));
+
+        let bot_pos = self.0.position();
+        let mut response = match requested_block {
+            Some(ref block_type) => {
+                format!(
+                    "Showing nearby blocks of type {block_type} in format:\n[x,y,z]: Block\nYour Current Position [{:.0},{:.0},{:.0}]:\n\n",
+                    bot_pos.x, bot_pos.y, bot_pos.z
+                )
+            }
+            None => format!(
+                "Showing all nearby blocks in format:\n[x,y,z]: Block\nYour Current Position [{:.0},{:.0},{:.0}]:\n\n",
+                bot_pos.x, bot_pos.y, bot_pos.z
+            ),
+        };
+
+        let world = self.0.partial_world().clone();
+        let chunks = &world.read().chunks;
+
+        let Some(chunks) = chunks.limited_get(&self.0.position().into()) else {
+            return "failed to get nearby chunks".into_pin_box_string();
+        };
+
+        let chunks = chunks.read();
+
+        for x in -x_radius..x_radius {
+            for y in -y_radius..y_radius {
+                for z in -z_radius..z_radius {
+                    let pos = Vec3::new(
+                        bot_pos.x + x as f64,
+                        bot_pos.y + y as f64,
+                        bot_pos.z + z as f64,
+                    );
+
+                    let Some(block) = chunks.get_block_state(&pos.into(), ONE_POINT_EIGHT_MIN_Y)
+                    else {
+                        continue;
+                    };
+
+                    if block.is_air() {
+                        continue;
+                    }
+
+                    let block = Box::<dyn azalea::block::BlockTrait>::from(block);
+                    let kind = block.as_registry_block().to_string();
+
+                    if requested_block.as_ref().is_some_and(|r| r != &kind) {
+                        continue;
+                    }
+
+                    let _ = writeln!(
+                        &mut response,
+                        "[{:.0},{:.0},{:.0}]: {}",
+                        pos.x,
+                        pos.y,
+                        pos.z,
+                        kind.split_once(':').map_or(kind.as_str(), |v| v.1)
+                    );
+                }
+            }
+        }
+
+        response.into_pin_box_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![
+            ToolCallArgDescriptor::new(
+                false,
+                "z_radius",
+                crate::agent::tool::ToolCallArgType::Number,
+                "the maximum z radius a block can have from you to be read, defaults to 3",
+            ),
+            ToolCallArgDescriptor::new(
+                false,
+                "x_radius",
+                crate::agent::tool::ToolCallArgType::Number,
+                "the maximum x radius a block can have from you to be read, defaults to 5",
+            ),
+            ToolCallArgDescriptor::new(
+                false,
+                "y_radius",
+                crate::agent::tool::ToolCallArgType::Number,
+                "the maximum y radius a block can have from you to be read, defaults to 5",
+            ),
+            ToolCallArgDescriptor::new(
+                false,
+                "block_type",
+                crate::agent::tool::ToolCallArgType::String,
+                "block type in lower snake case. if none is provided will show all blocks in the radius (excluding air). example: oak_log",
+            ),
+        ]
+    }
+
+    fn get_timeout_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(0)
+    }
+}
+
+pub struct PathFind<'a>(&'a Client);
+
+impl<'a> PathFind<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self(client)
+    }
+}
+
+impl ToolCallFn for PathFind<'_> {
+    fn get_name(&self) -> &'static str {
+        "path_find"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "path find to a certain position, make sure that it is reachable, stairs are not traversible"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let arg_to_i32 = |arg: &serde_json::Value, name: &str| {
+            arg.get(name)
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|v| TryInto::<i32>::try_into(v).ok())
+        };
+
+        let Some(x) = arg_to_i32(args, "x") else {
+            return "Please provie a valid x position in the arguments".into_pin_box_string();
+        };
+        let Some(y) = arg_to_i32(args, "y") else {
+            return "Please provie a valid y position in the arguments".into_pin_box_string();
+        };
+        let Some(z) = arg_to_i32(args, "z") else {
+            return "Please provie a valid z position in the arguments".into_pin_box_string();
+        };
+        let bot = self.0.clone();
+        Box::pin(async move {
+            let goto_bot = bot.clone();
+            let goto_thread = tokio::spawn(async move {
+                goto_bot
+                    .goto_with_opts(
+                        BlockPosGoal(BlockPos::new(x, y, z)),
+                        PathfinderOpts::new().allow_mining(false).max_timeout(
+                            azalea::pathfinder::astar::PathfinderTimeout::Time(
+                                Duration::from_millis(1000),
+                            ),
+                        ),
+                    )
+                    .await;
+            });
+
+            if tokio::time::timeout(Duration::from_millis(1500), async {
+                while bot.is_calculating_path() {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .is_err()
+            {
+                goto_thread.abort();
+                return "failed: path calculation timeout".into();
+            }
+
+            let start = Instant::now();
+
+            let response = loop {
+                let dist = bot.position().distance_to(Vec3 {
+                    x: f64::from(x),
+                    y: f64::from(y),
+                    z: f64::from(z),
+                });
+                if dist <= 1.5 {
+                    bot.stop_pathfinding();
+                    break "success: reached goal".into();
+                }
+
+                if start.elapsed() > Duration::from_secs(10) {
+                    break format!("failed: goal not reached in 10 seconds (distance {dist:.2})");
+                }
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            };
+            bot.stop_pathfinding();
+            goto_thread.abort();
+            response
+        })
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![
+            ToolCallArgDescriptor::new(
+                true,
+                "x",
+                crate::agent::tool::ToolCallArgType::Number,
+                "the x coordinate of the position to pathfind to as signed integer",
+            ),
+            ToolCallArgDescriptor::new(
+                true,
+                "y",
+                crate::agent::tool::ToolCallArgType::Number,
+                "the y coordinate of the position to pathfind to as signed integer",
+            ),
+            ToolCallArgDescriptor::new(
+                true,
+                "z",
+                crate::agent::tool::ToolCallArgType::Number,
+                "the z coordinate of the position to pathfind to as signed integer",
+            ),
+        ]
+    }
+    fn get_timeout_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(0)
+    }
+}
+
+pub struct GetCurrentPosition<'a>(&'a Client);
+
+impl<'a> GetCurrentPosition<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self(client)
+    }
+}
+
+impl ToolCallFn for GetCurrentPosition<'_> {
+    fn get_name(&self) -> &'static str {
+        "get_current_position"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "get your current position"
+    }
+
+    fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        format!("current position: {}", self.0.position()).into_pin_box_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        Vec::new()
+    }
+}
+
+pub struct NearbyBlockKinds<'a>(&'a Client);
+
+impl<'a> NearbyBlockKinds<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self(client)
+    }
+}
+
+impl ToolCallFn for NearbyBlockKinds<'_> {
+    fn get_name(&self) -> &'static str {
+        "nearby_block_kinds"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "get the block names as string in a set radius around you"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let radius = |name, default| {
+            args.get(name)
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(default)
+        };
+
+        let z_radius = radius("z_radius", 3);
+        let x_radius = radius("x_radius", 5);
+        let y_radius = radius("y_radius", 5);
+        let world = self.0.partial_world().clone();
+        let chunks = &world.read().chunks;
+        let bot_pos = self.0.position();
+
+        let Some(chunks) = chunks.limited_get(&self.0.position().into()) else {
+            return "failed to get nearby chunks".into_pin_box_string();
+        };
+
+        let chunks = chunks.read();
+        let mut found_blocks = String::from("Found block kinds:\n");
+
+        for x in -x_radius..x_radius {
+            for y in -y_radius..y_radius {
+                for z in -z_radius..z_radius {
+                    let pos = Vec3::new(
+                        bot_pos.x + x as f64,
+                        bot_pos.y + y as f64,
+                        bot_pos.z + z as f64,
+                    );
+
+                    let Some(block) = chunks.get_block_state(&pos.into(), ONE_POINT_EIGHT_MIN_Y)
+                    else {
+                        continue;
+                    };
+
+                    if block.is_air() {
+                        continue;
+                    }
+
+                    let block = Box::<dyn azalea::block::BlockTrait>::from(block);
+                    let kind = block.as_registry_block().to_string();
+                    let kind = kind.split_once(':').map_or(kind.as_str(), |v| v.1);
+                    if !found_blocks.contains(kind) {
+                        _ = writeln!(&mut found_blocks, "{kind}");
+                    }
+                }
+            }
+        }
+        found_blocks.into_pin_box_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![
+            ToolCallArgDescriptor::new(
+                false,
+                "z_radius",
+                crate::agent::tool::ToolCallArgType::Number,
+                "the maximum z radius a block can have from you to be read, defaults to 3",
+            ),
+            ToolCallArgDescriptor::new(
+                false,
+                "x_radius",
+                crate::agent::tool::ToolCallArgType::Number,
+                "the maximum x radius a block can have from you to be read, defaults to 5",
+            ),
+            ToolCallArgDescriptor::new(
+                false,
+                "y_radius",
+                crate::agent::tool::ToolCallArgType::Number,
+                "the maximum y radius a block can have from you to be read, defaults to 5",
+            ),
+        ]
+    }
+    fn get_timeout_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(0)
+    }
+}
+
+pub struct DeclineFriendRequest<'a>(&'a Client);
+
+impl<'a> DeclineFriendRequest<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self(client)
+    }
+}
+
+impl ToolCallFn for DeclineFriendRequest<'_> {
+    fn get_name(&self) -> &'static str {
+        "decline_friend_request"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "decline a friend request that you received"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let Some(serde_json::Value::String(username)) = args.get("username") else {
+            return "Please provide a username whose friend request to decline"
+                .into_pin_box_string();
+        };
+        self.0.chat(format!("/f deny {username}"));
+        format!("declined friend request by {username}").into_pin_box_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor::new(
+            true,
+            "username",
+            crate::agent::tool::ToolCallArgType::String,
+            "the username whose friend request should be declined",
+        )]
+    }
+}
+pub struct AcceptFriendRequest<'a>(&'a Client);
+
+impl<'a> AcceptFriendRequest<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self(client)
+    }
+}
+
+impl ToolCallFn for AcceptFriendRequest<'_> {
+    fn get_name(&self) -> &'static str {
+        "accept_friend_request"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "accept a friend request that you received"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let Some(serde_json::Value::String(username)) = args.get("username") else {
+            return "Please provide a username whose friend request to accept"
+                .into_pin_box_string();
+        };
+        self.0.chat(format!("/f accept {username}"));
+        format!("accepted friend request by {username}").into_pin_box_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor::new(
+            true,
+            "username",
+            crate::agent::tool::ToolCallArgType::String,
+            "the username whose friend request should be accepted",
+        )]
+    }
+}
+
+pub struct RunCommand<'a, 'b>(&'a Client, &'b State);
+
+impl<'a, 'b> RunCommand<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
+    }
+}
+
+impl ToolCallFn for RunCommand<'_, '_> {
+    fn get_name(&self) -> &'static str {
+        "run_command"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "run any command"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let Some(serde_json::Value::String(command)) = args.get("command") else {
+            return "please provide a command".into_pin_box_string();
+        };
+        let arg = args
+            .get("args")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        self.0.chat(format!("/{command} {arg}"));
+        let past_messages = self.1.messages.clone();
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(3)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, s| {
+                    _ = writeln!(&mut acc, "{s}");
+                    acc
+                });
+            format!("Sent command, past chat:\n{past_messages}")
+        })
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![
+            ToolCallArgDescriptor::new(
+                true,
+                "command",
+                crate::agent::tool::ToolCallArgType::String,
+                "the command category to run",
+            ),
+            ToolCallArgDescriptor::new(
+                false,
+                "args",
+                crate::agent::tool::ToolCallArgType::String,
+                "the arguments to provide for additional configuration of the main command",
+            ),
+        ]
     }
 }

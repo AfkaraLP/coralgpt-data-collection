@@ -16,6 +16,8 @@ pub struct OpenAIClient {
 pub type BoxedTool<'a> = Box<dyn ToolCallFn + Send + Sync + 'a>;
 pub struct ToolMap<'a>(HashMap<&'static str, BoxedTool<'a>>);
 
+const TRUNCATION_PROMPT: &str = include_str!("./TRUNCATION_PROMPT.txt");
+
 impl<'a> ToolMap<'a> {
     pub fn new() -> Self {
         Self(HashMap::new())
@@ -86,7 +88,7 @@ impl OpenAIClient {
     }
 
     pub async fn compact_history(&self, messages: &[ChatCompletionMessageParam]) -> Option<String> {
-        let system_prompt: String = "You are a conversation summarizer. Given a conversation between a user and an LLM, produce a compact user prompt that gives the LLM enough context to seamlessly continue from where the conversation left off. Preserve key decisions, unresolved questions, current state, and any relevant artifacts or code.".into();
+        let system_prompt: String = TRUNCATION_PROMPT.into();
         let mut history = messages
             .iter()
             .filter(|m| m.role != AIChatRole::System)
@@ -187,7 +189,7 @@ pub struct ChatCompletionResponseChoice {
 pub struct ChatCompletionResponseMessage {
     pub role: AIChatRole,
     pub content: Option<String>,
-    pub tool_calls: Option<Vec<ToolInvocation>>,
+    pub tool_calls: Vec<ToolInvocation>,
     pub reasoning: Option<String>,
 }
 
@@ -202,4 +204,10 @@ pub struct ToolInvocation {
 pub struct ToolInvocationFunction {
     pub arguments: String,
     pub name: String,
+}
+
+impl std::fmt::Display for ChatCompletionMessageParam {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "[{:#?}: {}]", self.role, self.content)
+    }
 }

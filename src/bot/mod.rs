@@ -17,9 +17,10 @@ use tokio::{sync::mpsc::Sender, time};
 use crate::ENV_VARS;
 use crate::agent::openai_client::{ChatCompletionMessageParam, ToolMap};
 use crate::bot::tools::{
-    AddFriend, GetInventory, GetPartyInfo, GetStats, InviteParty, JoinParty, LeaveParty,
-    ReadChatHistory, ReadTabList, RemoveFriend, RespondToUser, SelectHotbarSlot, SendChatMessage,
-    SendDirectMessage, SendPartyMessage, Sleep, StopAgentLoop,
+    AcceptFriendRequest, AddFriend, DeclineFriendRequest, GetCurrentPosition, GetInventory,
+    GetNearbyBlocks, GetPartyInfo, GetStats, InviteParty, JoinParty, LeaveParty, NearbyBlockKinds,
+    PathFind, ReadChatHistory, ReadTabList, RemoveFriend, RespondToUser, RunCommand,
+    SelectHotbarSlot, SendChatMessage, SendDirectMessage, SendPartyMessage, Sleep, StopAgentLoop,
 };
 use crate::{State, message::Message, server::WsServerMessage};
 
@@ -170,7 +171,7 @@ async fn send_tab_list(bot: &Client, sender: Sender<String>) {
         );
     }
     match sender.send(players).await {
-        Ok(()) => eprintln!("successfully sent tablist..."),
+        Ok(()) => {}
         Err(_) => eprintln!("failed to send tablist..."),
     }
 }
@@ -252,21 +253,28 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
         && message.starts_with("/agent")
     {
         let tools_map = ToolMap::new()
+            .register_tool(RespondToUser::new(bot, username, state))
+            .register_tool(Sleep::new(state))
             .register_tool(SendDirectMessage::new(bot, state))
+            .register_tool(SendChatMessage::new(bot, state))
+            .register_tool(RunCommand::new(bot, state))
+            .register_tool(NearbyBlockKinds::new(bot))
+            .register_tool(PathFind::new(bot))
+            .register_tool(GetCurrentPosition::new(bot))
             .register_tool(GetStats::new(bot, state))
             .register_tool(ReadChatHistory::new(state))
             .register_tool(ReadTabList::new(bot))
-            .register_tool(SendChatMessage::new(bot, state))
-            .register_tool(RespondToUser::new(bot, username, state))
+            .register_tool(AcceptFriendRequest::new(bot))
+            .register_tool(DeclineFriendRequest::new(bot))
             .register_tool(GetInventory::new(bot))
             .register_tool(SelectHotbarSlot::new(bot))
             .register_tool(JoinParty::new(bot))
             .register_tool(InviteParty::new(bot))
-            .register_tool(Sleep::new(state))
             .register_tool(SendPartyMessage::new(bot, state))
             .register_tool(LeaveParty::new(bot))
             .register_tool(GetPartyInfo::new(bot, state))
             .register_tool(AddFriend::new(bot))
+            .register_tool(GetNearbyBlocks::new(bot))
             .register_tool(RemoveFriend::new(bot));
         bot.run_agent_loop(
             ai_client,
@@ -387,14 +395,14 @@ impl AiFunctionality for Client {
             }
             let comp = ai_client.get_completion(&messages, &tools_map).await;
             let Ok(completion) = comp else {
+                println!("breaking agentic loop because there was no completion");
                 break;
             };
             let Some(first) = completion.choices.first() else {
+                println!("breaking agentic loop because there was no first completion");
                 break;
             };
-            let Some(ref tool_calls) = first.message.tool_calls else {
-                break;
-            };
+            let tool_calls = &first.message.tool_calls;
             let agent_response_content = first.message.content.clone().unwrap_or_default();
             if !agent_response_content.is_empty() || tool_calls.is_empty() {
                 messages.push(ChatCompletionMessageParam {
@@ -427,7 +435,13 @@ impl AiFunctionality for Client {
                 });
             }
 
-            println!("[LLM] we sent messages: \n\n{messages:#?}");
+            println!(
+                "[LLM] we sent messages: \n\n{}",
+                messages.iter().fold(String::new(), |mut acc, v| {
+                    _ = writeln!(&mut acc, "{v}");
+                    acc
+                })
+            );
         }
     }
 }

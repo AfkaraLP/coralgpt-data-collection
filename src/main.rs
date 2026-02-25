@@ -93,6 +93,11 @@ impl State {
     }
 }
 
+#[must_use]
+pub fn is_spam_message(m: &str) -> bool {
+    m.contains("è entrato nella lobby.") || m.starts_with("CORALMC")
+}
+
 #[actix_web::main]
 async fn main() -> AppExit {
     let (instruction_sender, instruction_receiver) = tokio::sync::mpsc::channel::<Instruction>(10);

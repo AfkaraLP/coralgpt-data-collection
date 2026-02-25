@@ -60,6 +60,8 @@ pub enum ToolCallArgType {
     String,
     #[serde(rename = "number")]
     Number,
+    #[serde(rename = "bool")]
+    Bool,
 }
 
 impl ToolCallArgDescriptor {
