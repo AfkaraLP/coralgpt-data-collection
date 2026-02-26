@@ -344,6 +344,11 @@
                 <button class="mc-btn" onclick="toggleBlocklist()">Blocklist: ON</button>
             </div>
             <div class="control-section">
+                <div class="control-label">Agent</div>
+                <input type="text" class="chat-input" id="agentPrompt" placeholder="Agent prompt..." style="margin-bottom:8px;width:100%;background:#000;border:2px solid #555;color:var(--text);padding:8px;font-family:inherit;font-size:16px;">
+                <button class="mc-btn mc-btn-green" onclick="runAgent()">Run Agent</button>
+            </div>
+            <div class="control-section">
                 <div class="control-label">Hotbar Slot</div>
                 <div style="display:flex;gap:2px;">
                     <button class="mc-btn slot-btn" style="width:auto;flex:1;padding:6px 0;margin:0;" onclick="selectSlot(0)">1</button>
@@ -617,6 +622,33 @@
             const btn = event.target;
             btn.textContent = 'Blocklist: ' + (blocklistEnabled ? 'ON' : 'OFF');
             renderMessages(allMessages);
+        }
+
+        async function runAgent() {
+            const promptEl = document.getElementById('agentPrompt');
+            const prompt = promptEl.value.trim();
+            
+            if (!prompt) {
+                showToast('Please enter a prompt', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch('/agent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt })
+                });
+                const text = await res.text();
+                if (res.ok) {
+                    showToast(text, 'success');
+                    promptEl.value = '';
+                } else {
+                    showToast(text, 'error');
+                }
+            } catch (e) {
+                showToast('Failed to start agent', 'error');
+            }
         }
 
         inputEl.addEventListener('keypress', (e) => {

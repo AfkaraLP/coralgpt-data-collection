@@ -17,7 +17,9 @@ use crate::buffer::FifoBuffer;
 use crate::server::{Broadcaster, MessageLog, bot_messages, ws_handler};
 use crate::{
     bot::{BotLocation, Instruction, handle},
-    server::{bot_chat, bot_get_slot, bot_jump, bot_slot, bot_sneak, bot_tab, bot_walk, index},
+    server::{
+        bot_agent, bot_chat, bot_get_slot, bot_jump, bot_slot, bot_sneak, bot_tab, bot_walk, index,
+    },
 };
 
 mod agent;
@@ -95,7 +97,9 @@ impl State {
 
 #[must_use]
 pub fn is_spam_message(m: &str) -> bool {
-    m.contains("è entrato nella lobby.") || m.starts_with("CORALMC")
+    m.contains("è entrato nella lobby.")
+        || m.starts_with("CORALMC")
+        || m.contains("Login eseguito con successo.")
 }
 
 #[actix_web::main]
@@ -132,6 +136,7 @@ async fn main() -> AppExit {
                 .service(bot_slot)
                 .service(bot_get_slot)
                 .service(bot_messages)
+                .service(bot_agent)
         })
         .bind(("127.0.0.1", port))
         .expect("server failed")

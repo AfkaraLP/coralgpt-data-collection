@@ -35,6 +35,7 @@ pub enum Instruction {
     Sneak(bool),
     Slot(u8),
     GetSlot(Sender<u8>),
+    Agent(String),
 }
 
 #[derive(Default, Clone, Component, PartialEq, Eq, PartialOrd, Ord)]
@@ -142,6 +143,39 @@ pub fn is_dm_message(msg: impl AsRef<str>) -> bool {
     DM_MSG_REGEX.is_match(msg.as_ref())
 }
 
+async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str) {
+    if let Some(ai_client) = &ENV_VARS.openai_client {
+        let username = &ENV_VARS.username;
+        let tools_map = ToolMap::new()
+            .register_tool(RespondToUser::new(bot, username, state))
+            .register_tool(Sleep::new(state))
+            .register_tool(SendDirectMessage::new(bot, state))
+            .register_tool(SendChatMessage::new(bot, state))
+            .register_tool(QuickCommand::new(bot, state))
+            .register_tool(RunCommand::new(bot, state))
+            .register_tool(NearbyBlockKinds::new(bot))
+            .register_tool(PathFind::new(bot))
+            .register_tool(GetCurrentPosition::new(bot))
+            .register_tool(GetStats::new(bot, state))
+            .register_tool(ReadChatHistory::new(state))
+            .register_tool(ReadTabList::new(bot))
+            .register_tool(AcceptFriendRequest::new(bot))
+            .register_tool(DeclineFriendRequest::new(bot))
+            .register_tool(GetInventory::new(bot))
+            .register_tool(SelectHotbarSlot::new(bot))
+            .register_tool(JoinParty::new(bot, state))
+            .register_tool(InviteParty::new(bot, state))
+            .register_tool(SendPartyMessage::new(bot, state))
+            .register_tool(LeaveParty::new(bot, state))
+            .register_tool(GetPartyInfo::new(bot, state))
+            .register_tool(AddFriend::new(bot, state))
+            .register_tool(GetNearbyBlocks::new(bot))
+            .register_tool(RemoveFriend::new(bot, state));
+        bot.run_agent_loop(ai_client, prompt, username, tools_map)
+            .await;
+    }
+}
+
 async fn handle_instruction(bot: &Client, state: &State) {
     let mut guard = state.recv_instruction.lock().await;
     if let Some(recv) = guard.as_mut()
@@ -156,6 +190,9 @@ async fn handle_instruction(bot: &Client, state: &State) {
             Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
             Instruction::GetSlot(sender) => {
                 let _ = sender.send(bot.selected_hotbar_slot()).await;
+            }
+            Instruction::Agent(prompt) => {
+                handle_agent_instruction(bot, state, &prompt).await;
             }
         }
     }
@@ -269,14 +306,14 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
             .register_tool(DeclineFriendRequest::new(bot))
             .register_tool(GetInventory::new(bot))
             .register_tool(SelectHotbarSlot::new(bot))
-            .register_tool(JoinParty::new(bot))
-            .register_tool(InviteParty::new(bot))
+            .register_tool(JoinParty::new(bot, state))
+            .register_tool(InviteParty::new(bot, state))
             .register_tool(SendPartyMessage::new(bot, state))
-            .register_tool(LeaveParty::new(bot))
+            .register_tool(LeaveParty::new(bot, state))
             .register_tool(GetPartyInfo::new(bot, state))
-            .register_tool(AddFriend::new(bot))
+            .register_tool(AddFriend::new(bot, state))
             .register_tool(GetNearbyBlocks::new(bot))
-            .register_tool(RemoveFriend::new(bot));
+            .register_tool(RemoveFriend::new(bot, state));
         bot.run_agent_loop(
             ai_client,
             message.strip_prefix("/agent").unwrap_or(message),

@@ -11,6 +11,7 @@ use tokio::sync::{
     mpsc::{self, Sender},
 };
 
+use crate::ENV_VARS;
 use crate::{bot::Instruction, buffer::FifoBuffer};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -508,6 +509,22 @@ pub async fn bot_get_slot(data: web::Data<Arc<Sender<Instruction>>>) -> impl Res
             Some(slot) => slot.to_string(),
             None => "failed".to_string(),
         },
+        Err(_) => "failed".to_string(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AgentRequest {
+    prompt: String,
+}
+
+#[post("/agent")]
+pub async fn bot_agent(
+    req: web::Json<AgentRequest>,
+    data: web::Data<Arc<Sender<Instruction>>>,
+) -> impl Responder {
+    match data.send(Instruction::Agent(req.prompt.clone())).await {
+        Ok(()) => format!("agent started for user {}", &ENV_VARS.username),
         Err(_) => "failed".to_string(),
     }
 }

@@ -325,15 +325,15 @@ impl ToolCallFn for Sleep<'_> {
     }
 }
 
-pub struct JoinParty<'a>(&'a Client);
+pub struct JoinParty<'a, 'b>(&'a Client, &'b State);
 
-impl<'a> JoinParty<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self(client)
+impl<'a, 'b> JoinParty<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
     }
 }
 
-impl ToolCallFn for JoinParty<'_> {
+impl ToolCallFn for JoinParty<'_, '_> {
     fn get_name(&self) -> &'static str {
         "join_party"
     }
@@ -347,7 +347,29 @@ impl ToolCallFn for JoinParty<'_> {
             return "did not provide correct arguments for party join".into_pin_box_string();
         };
         self.0.chat(format!("/p join {username}"));
-        "successfully sent join party command".into_pin_box_string()
+        let past_messages = self.1.messages.clone();
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(5)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, v| {
+                    _ = writeln!(&mut acc, "{v}");
+                    acc
+                });
+            if past_messages.contains("entrato nel party!") {
+                "Successfully joined party".into()
+            } else {
+                format!("Failed joining party, chat history:\n\n{past_messages}")
+            }
+        })
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
@@ -359,15 +381,15 @@ impl ToolCallFn for JoinParty<'_> {
         )]
     }
 }
-pub struct InviteParty<'a>(&'a Client);
+pub struct InviteParty<'a, 'b>(&'a Client, &'b State);
 
-impl<'a> InviteParty<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self(client)
+impl<'a, 'b> InviteParty<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
     }
 }
 
-impl ToolCallFn for InviteParty<'_> {
+impl ToolCallFn for InviteParty<'_, '_> {
     fn get_name(&self) -> &'static str {
         "invite_party"
     }
@@ -381,7 +403,38 @@ impl ToolCallFn for InviteParty<'_> {
             return "did not provide correct arguments for party invite".into_pin_box_string();
         };
         self.0.chat(format!("/p invite {username}"));
-        "successfully sent invite party command".into_pin_box_string()
+        let past_messages = self.1.messages.clone();
+        let username = username.clone();
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(5)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, v| {
+                    _ = writeln!(&mut acc, "{v}");
+                    acc
+                });
+            if past_messages.contains("Hai invitato") && past_messages.contains("nel party!") {
+                format!("Successfully invited {username} to a party.")
+            } else if past_messages.contains("Questo giocatore risulta offline...") {
+                "This player either is offline or does not exist.".into()
+            } else if past_messages
+                .contains("Hai già inviato una richiesta di party a questo giocatore!")
+            {
+                "You already invited this player to the party.".into()
+            } else if past_messages.contains("Questo giocatore risulta essere in un altro party!") {
+                "This player is already in another party.".into()
+            } else {
+                format!("Failed inviting {username} to the party. chat history:\n\n{past_messages}")
+            }
+        })
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
@@ -535,7 +588,13 @@ impl ToolCallFn for GetInventory<'_> {
                 .fold(
                     String::from("Current inventory:\n"),
                     |mut acc, (idx, slot)| {
-                        _ = writeln!(&mut acc, "[index {}]: {}", idx, slot.kind());
+                        let kind = slot.kind().to_string();
+                        _ = writeln!(
+                            &mut acc,
+                            "[index {}]: {}",
+                            idx,
+                            kind.split_once(':').map_or(kind.as_str(), |v| v.1)
+                        );
                         acc
                     },
                 )
@@ -664,19 +723,19 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
     }
 
     fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(200)
+        std::time::Duration::from_millis(1000)
     }
 }
 
-pub struct LeaveParty<'a>(&'a Client);
+pub struct LeaveParty<'a, 'b>(&'a Client, &'b State);
 
-impl<'a> LeaveParty<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self(client)
+impl<'a, 'b> LeaveParty<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
     }
 }
 
-impl ToolCallFn for LeaveParty<'_> {
+impl ToolCallFn for LeaveParty<'_, '_> {
     fn get_name(&self) -> &'static str {
         "leave_party"
     }
@@ -687,15 +746,33 @@ impl ToolCallFn for LeaveParty<'_> {
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
         self.0.chat("/p leave");
-        "sent leave party command".into_pin_box_string()
+        let past_messages = self.1.messages.clone();
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(5)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, v| {
+                    _ = writeln!(&mut acc, "{v}");
+                    acc
+                });
+            if past_messages.contains("uscito") || past_messages.contains("stato sciolto!") {
+                "Successfully left the party".into()
+            } else {
+                "Failed leaving the party as you were in no party.".into()
+            }
+        })
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         Vec::new()
-    }
-
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(200)
     }
 }
 
@@ -743,21 +820,17 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         Vec::new()
     }
+}
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(500)
+pub struct AddFriend<'a, 'b>(&'a Client, &'b State);
+
+impl<'a, 'b> AddFriend<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
     }
 }
 
-pub struct AddFriend<'a>(&'a Client);
-
-impl<'a> AddFriend<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self(client)
-    }
-}
-
-impl ToolCallFn for AddFriend<'_> {
+impl ToolCallFn for AddFriend<'_, '_> {
     fn get_name(&self) -> &'static str {
         "add_friend"
     }
@@ -771,7 +844,33 @@ impl ToolCallFn for AddFriend<'_> {
             return "please provide a username to add as friend".into_pin_box_string();
         };
         self.0.chat(format!("/f add {username}"));
-        format!("sent friend request to {username}").into_pin_box_string()
+        let past_messages = self.1.messages.clone();
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(5)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, v| {
+                    _ = writeln!(&mut acc, "{v}");
+                    acc
+                });
+            if past_messages.contains("Hai inviato una richiesta di amicizia") {
+                "Successfully sent friend request".into()
+            } else if past_messages.contains("Il giocatore specificato non è online.") {
+                "The player is not online.".into()
+            } else if past_messages.contains("Hai già inviato una richiesta di amicizia a") {
+                "You already sent a friend request to this player".into()
+            } else {
+                format!("Failed sending friend request. chat history:\n\n{past_messages}")
+            }
+        })
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
@@ -784,15 +883,15 @@ impl ToolCallFn for AddFriend<'_> {
     }
 }
 
-pub struct RemoveFriend<'a>(&'a Client);
+pub struct RemoveFriend<'a, 'b>(&'a Client, &'b State);
 
-impl<'a> RemoveFriend<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self(client)
+impl<'a, 'b> RemoveFriend<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
     }
 }
 
-impl ToolCallFn for RemoveFriend<'_> {
+impl ToolCallFn for RemoveFriend<'_, '_> {
     fn get_name(&self) -> &'static str {
         "remove_friend"
     }
@@ -806,7 +905,32 @@ impl ToolCallFn for RemoveFriend<'_> {
             return "please provide a username to remove from friends".into_pin_box_string();
         };
         self.0.chat(format!("/f remove {username}"));
-        format!("removed {username} from friends").into_pin_box_string()
+        let past_messages = self.1.messages.clone();
+        let username = username.clone();
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(5)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, v| {
+                    _ = writeln!(&mut acc, "{v}");
+                    acc
+                });
+            if past_messages.contains("Hai rimosso") && past_messages.contains("dai tuoi amici.") {
+                format!("Successfully removed {username} from your friends list.")
+            } else if past_messages.contains("Non sei amico di") {
+                format!("You are not friends with {username}.")
+            } else {
+                format!("Failed Removing friend. chat history:\n\n{past_messages}")
+            }
+        })
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
@@ -911,6 +1035,9 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
         let bot_pos = self.0.position();
         let mut response = match requested_block {
             Some(ref block_type) => {
+                let block_type = block_type
+                    .split_once(':')
+                    .map_or(block_type.as_str(), |v| v.1);
                 format!(
                     "Showing nearby blocks of type {block_type} in format:\n[x,y,z]: Block\nYour Current Position [{:.0},{:.0},{:.0}]:\n\n",
                     bot_pos.x, bot_pos.y, bot_pos.z
@@ -1353,7 +1480,11 @@ impl ToolCallFn for RunCommand<'_, '_> {
                     _ = writeln!(&mut acc, "{s}");
                     acc
                 });
-            format!("Sent command, past chat:\n{past_messages}")
+            if past_messages.contains("Comando sconosciuto.") {
+                "Uknown Command".into()
+            } else {
+                format!("Ran command, past chat output:\n\n{past_messages}")
+            }
         })
     }
 
