@@ -18,7 +18,7 @@ pub trait IntoPinBoxString<'a>: Sized + Send + ToString + 'a {
 impl<'a, T: Sized + Send + ToString + 'a> IntoPinBoxString<'a> for T {}
 
 use crate::{
-    State,
+    ENV_VARS, State,
     agent::tool::{ToolCallArgDescriptor, ToolCallFn},
     is_spam_message,
 };
@@ -300,7 +300,7 @@ impl ToolCallFn for Sleep<'_> {
                                 acc
                             });
                         format!(
-                            "# slept for {num} seconds, past few chat messages:\n {past_messages}"
+                            "slept for {num} seconds, past few chat messages:\n {past_messages}"
                         )
                     })
                 } else {
@@ -736,7 +736,7 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
                     acc
                 });
 
-            format!("# requested party info, check chat for details: \n\n{past_messages}")
+            format!("requested party info, check chat for details: \n\n{past_messages}")
         })
     }
 
@@ -1372,5 +1372,90 @@ impl ToolCallFn for RunCommand<'_, '_> {
                 "the arguments to provide for additional configuration of the main command",
             ),
         ]
+    }
+}
+
+pub struct QuickCommand<'a, 'b>(&'a Client, &'b State);
+
+impl<'a, 'b> QuickCommand<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
+    }
+}
+
+impl ToolCallFn for QuickCommand<'_, '_> {
+    fn get_name(&self) -> &'static str {
+        "quick_command"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "run quick commands to get your own stats, get party info, join a game, etc..."
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let Some(serde_json::Value::String(command)) = args.get("command") else {
+            return "please provide a command".into_pin_box_string();
+        };
+        let exc_comm = match command.trim() {
+            "pinfo" => {
+                self.0.chat("/p info");
+                "executed party info command."
+            }
+            "playtwo" => {
+                self.0.chat("/play two");
+                "executed join duo command."
+            }
+            "playthree" => {
+                self.0.chat("/play three");
+                "executed join trio command."
+            }
+            "stats" => {
+                self.0.chat(format!("/stats {}", ENV_VARS.username));
+                "executed stats command."
+            }
+            "ping" => {
+                self.0.chat("/ping");
+                "executed ping command."
+            }
+            _ => return format!("command \"{command}\" does not exist").into_pin_box_string(),
+        };
+        let past_messages = self.1.messages.clone();
+        let mut response = String::from(exc_comm);
+        response.push_str("past messages:\n\n");
+
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(8)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, s| {
+                    _ = writeln!(&mut acc, "{s}");
+                    acc
+                });
+            response.push_str(&past_messages);
+            response
+        })
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor::new(
+            true,
+            "command",
+            crate::agent::tool::ToolCallArgType::String,
+            "quickcommand, choice of one of these choices:
+
+pinfo: get party info
+playtwo: join a duo game
+playthree: join a trio game
+stats: get your own stats
+ping: get your current ping",
+        )]
     }
 }

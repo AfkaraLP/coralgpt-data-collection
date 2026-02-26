@@ -68,6 +68,7 @@ impl OpenAIClient {
                 Some(req_tools)
             },
             messages: messages.to_vec(),
+            temperature: Some(0.4),
         };
         let mut reqbuilder = self
             .client
@@ -154,6 +155,7 @@ pub struct ChatCompletionRequest {
     pub model: String,
     pub tools: Option<Vec<serde_json::Value>>,
     pub messages: Vec<ChatCompletionMessageParam>,
+    pub temperature: Option<f32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

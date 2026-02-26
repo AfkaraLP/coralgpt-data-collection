@@ -16,3 +16,4 @@
 * **Tool Results:** Key facts extracted from recent tool outputs (party info, stats, inventory summary).
 * **Social Context:** Recent mentions of the bot (who said what), active chat topics, and general chat tone.
 * **Recent Actions:** What the bot just did (last messages sent, last commands executed).
+* **Pending Objectives:** If the agent was asked to stop the loop mid-task or has pending objectives (e.g., "wait for player to join", "check back on game start", "respond to pending DM"), you MUST explicitly state these as the first item under "Current State" - this is imperative for continuity.

@@ -19,7 +19,7 @@ use crate::agent::openai_client::{ChatCompletionMessageParam, ToolMap};
 use crate::bot::tools::{
     AcceptFriendRequest, AddFriend, DeclineFriendRequest, GetCurrentPosition, GetInventory,
     GetNearbyBlocks, GetPartyInfo, GetStats, InviteParty, JoinParty, LeaveParty, NearbyBlockKinds,
-    PathFind, ReadChatHistory, ReadTabList, RemoveFriend, RespondToUser, RunCommand,
+    PathFind, QuickCommand, ReadChatHistory, ReadTabList, RemoveFriend, RespondToUser, RunCommand,
     SelectHotbarSlot, SendChatMessage, SendDirectMessage, SendPartyMessage, Sleep, StopAgentLoop,
 };
 use crate::{State, message::Message, server::WsServerMessage};
@@ -257,6 +257,7 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
             .register_tool(Sleep::new(state))
             .register_tool(SendDirectMessage::new(bot, state))
             .register_tool(SendChatMessage::new(bot, state))
+            .register_tool(QuickCommand::new(bot, state))
             .register_tool(RunCommand::new(bot, state))
             .register_tool(NearbyBlockKinds::new(bot))
             .register_tool(PathFind::new(bot))
@@ -423,8 +424,8 @@ impl AiFunctionality for Client {
                     tokio::time::sleep(tool.get_timeout_wait()).await;
                     _ = writeln!(
                         &mut tool_responses,
-                        "tool({}) output: \n\n{answer}",
-                        tool.get_name()
+                        "{name} output: \n\n{answer}",
+                        name = tool.get_name()
                     );
                 }
             }
