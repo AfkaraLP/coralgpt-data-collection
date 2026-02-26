@@ -375,6 +375,7 @@ pub trait AiFunctionality {
     );
 }
 
+#[allow(clippy::too_many_lines)]
 impl AiFunctionality for Client {
     async fn run_agent_loop(
         &self,
@@ -405,6 +406,13 @@ impl AiFunctionality for Client {
         messages.push(user_message);
 
         while !*should_stop_agent_loop.lock().await {
+            if messages
+                .iter()
+                .any(|m| m.content.contains("/stopagentloop"))
+            {
+                bot.chat(format!("/msg {username} stopped agent loop..."));
+                break;
+            }
             if messages.len() > 15 {
                 let mut compaction_its = 0_usize;
                 let compacted = loop {

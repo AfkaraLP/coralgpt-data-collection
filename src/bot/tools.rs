@@ -56,15 +56,11 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
         let Some(serde_json::Value::String(message)) = args.get("message") else {
             return "please provide a \"message\" field in the tool call".into_pin_box_string();
         };
+        if message.chars().count() > 100 {
+            return "Message exceeds 100 characters, please shorten it and try again..."
+                .into_pin_box_string();
+        }
         let mut response = String::new();
-        let message = if message.chars().count() > 100 {
-            response
-                .push_str("Message was too long, truncated to 100 characters. past messages: \n\n");
-            message.chars().take(100).collect::<String>()
-        } else {
-            response.push_str("Sent message. past messages: \n\n");
-            message.clone()
-        };
         let past_messages = self.1.messages.clone();
         self.0.chat(message);
         Box::pin(async move {
@@ -126,15 +122,11 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
         let serde_json::Value::String(message) = message_val else {
             return "message has to be of type string".into_pin_box_string();
         };
+        if message.chars().count() > 100 {
+            return "Message longer than 100 characters, please shorten it and try again..."
+                .into_pin_box_string();
+        }
         let mut response = String::new();
-        let message = if message.chars().count() > 100 {
-            response
-                .push_str("Message was too long, truncated to 100 characters. past messages: \n\n");
-            message.chars().take(100).collect::<String>()
-        } else {
-            response.push_str("Sent message. past messages: \n\n");
-            message.clone()
-        };
         let username = self.1.to_string();
         let past_messages = self.2.messages.clone();
         self.0.chat(format!("/msg {username} {message}"));
@@ -471,16 +463,12 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
         let Some(serde_json::Value::String(message)) = args.get("message") else {
             return "please provide a message to send to the user".into_pin_box_string();
         };
+        if message.chars().count() > 100 {
+            return "Message exceeds 100 characters, please shorten it and try again..."
+                .into_pin_box_string();
+        }
         let message_state = self.1.messages.clone();
         let mut response = String::new();
-        let message = if message.chars().count() > 100 {
-            response
-                .push_str("Message was too long, truncated to 100 characters. past messages: \n\n");
-            message.chars().take(100).collect::<String>()
-        } else {
-            response.push_str("Sent message. past messages: \n\n");
-            message.clone()
-        };
         let username = username.clone();
         self.0.chat(format!("/msg {username} {message}"));
         Box::pin(async move {
@@ -680,17 +668,12 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
         let Some(serde_json::Value::String(message)) = args.get("message") else {
             return "please provide a message to send to the party".into_pin_box_string();
         };
-        let message = message.clone();
+        if message.chars().count() > 100 {
+            return "Message exceeds 100 characters, please shorten it and try again..."
+                .into_pin_box_string();
+        }
         let past_messages = self.1.messages.clone();
         let mut response = String::new();
-        let message = if message.chars().count() > 100 {
-            response
-                .push_str("Message was too long, truncated to 100 characters. past messages: \n\n");
-            message.chars().take(100).collect::<String>()
-        } else {
-            response.push_str("Sent message. past messages: \n\n");
-            message
-        };
         self.0.chat(format!("/pc {message}"));
         Box::pin(async move {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -776,6 +759,104 @@ impl ToolCallFn for LeaveParty<'_, '_> {
     }
 }
 
+pub struct PartyInfo {
+    owner: String,
+    members: Vec<String>,
+    opened: bool,
+    muted: bool,
+}
+impl PartyInfo {
+    #[must_use]
+    fn new(owner: String) -> Self {
+        Self {
+            owner,
+            members: Vec::new(),
+            opened: false,
+            muted: false,
+        }
+    }
+    #[allow(unused)]
+    #[must_use]
+    fn set_owner(mut self, s: impl Into<String>) -> Self {
+        self.owner = s.into();
+        self
+    }
+    #[must_use]
+    fn set_opened(mut self) -> Self {
+        self.opened = true;
+        self
+    }
+    #[must_use]
+    fn set_muted(mut self) -> Self {
+        self.muted = true;
+        self
+    }
+    #[must_use]
+    fn set_members(mut self, u: impl Iterator<Item = String>) -> Self {
+        for user in u {
+            self.members.push(user);
+        }
+        self
+    }
+    pub fn party_info_to_llm_text(&self) -> String {
+        let info = self;
+        let members = if info.members.is_empty() {
+            "no members".to_string()
+        } else {
+            format!("members {}", info.members.join(", "))
+        };
+
+        let opened = if info.opened { "open" } else { "closed" };
+        let muted = if info.muted { "muted" } else { "not muted" };
+
+        format!(
+            "{}'s party has {}, it is {} and currently {}.",
+            info.owner, members, opened, muted
+        )
+    }
+    pub fn parse_party_info(input: &str) -> Option<PartyInfo> {
+        let input = input.trim();
+        let mut owner = None;
+        let mut members: Vec<String> = Vec::new();
+        let mut opened = false;
+        let mut muted = false;
+
+        for line in input.lines().map(str::trim) {
+            if let Some(v) = line.strip_prefix("Party di ") {
+                owner = Some(v.trim().to_string());
+            } else if let Some(v) = line.strip_prefix("Membri:") {
+                let v = v.trim();
+
+                if v != "Nessuno" && !v.is_empty() {
+                    members = v.split(',').map(|m| m.trim().to_string()).collect();
+                }
+            } else if let Some(v) = line.strip_prefix("Aperto:") {
+                let v = v.trim();
+                opened = matches!(v, "Sì" | "Si" | "Yes" | "true");
+            } else if let Some(v) = line.strip_prefix("Mutato:") {
+                let v = v.trim();
+                muted = matches!(v, "Sì" | "Si" | "Yes" | "true");
+            }
+        }
+
+        let mut info = PartyInfo::new(owner?);
+
+        if opened {
+            info = info.set_opened();
+        }
+
+        if muted {
+            info = info.set_muted();
+        }
+
+        if !members.is_empty() {
+            info = info.set_members(members.into_iter());
+        }
+
+        Some(info)
+    }
+}
+
 pub struct GetPartyInfo<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> GetPartyInfo<'a, 'b> {
@@ -798,6 +879,7 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
         let message_queue = self.1.messages.clone();
         Box::pin(async move {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let mut p_info: Option<PartyInfo> = None;
             let past_messages = message_queue
                 .lock()
                 .await
@@ -808,12 +890,24 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
                 .collect::<Vec<String>>()
                 .iter()
                 .rev()
-                .fold(String::new(), |mut acc, message| {
-                    _ = writeln!(&mut acc, "{message}");
+                .fold(String::new(), |mut acc, v| {
+                    if v.contains("Party di")
+                        && v.contains("Membri:")
+                        && v.contains("Aperto:")
+                        && v.contains("Mutato:")
+                    {
+                        p_info = PartyInfo::parse_party_info(v);
+                    }
+                    _ = writeln!(&mut acc, "{v}");
                     acc
                 });
-
-            format!("requested party info, check chat for details: \n\n{past_messages}")
+            if let Some(party_info) = p_info {
+                party_info.party_info_to_llm_text()
+            } else if past_messages.contains("Nessun party trovato!") {
+                "You are not in a party.".into()
+            } else {
+                format!("requested party info, check chat for details: \n\n{past_messages}")
+            }
         })
     }
 
@@ -943,6 +1037,148 @@ impl ToolCallFn for RemoveFriend<'_, '_> {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct PlayerStats {
+    pub level: Option<u32>,
+    pub xp: Option<u32>,
+    pub coins: Option<u64>,
+    pub kills: Option<u32>,
+    pub deaths: Option<u32>,
+    pub kd: Option<f32>,
+    pub final_kills: Option<u32>,
+    pub final_deaths: Option<u32>,
+    pub fk_fd: Option<f32>,
+    pub beds_broken: Option<u32>,
+    pub wins: Option<u32>,
+    pub losses: Option<u32>,
+    pub winrate: Option<f32>,
+    pub division: Option<String>,
+    pub division_xp: Option<u32>,
+    pub winstreak: Option<u32>,
+    pub max_winstreak: Option<u32>,
+}
+
+impl PlayerStats {
+    pub fn parse_from_chat<I>(lines: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let mut stats = PlayerStats::default();
+
+        for line in lines {
+            let line = line.as_ref().trim();
+
+            if let Some(v) = line.strip_prefix("Livello: ") {
+                stats.level = v.trim().parse().ok();
+            } else if let Some(v) = line.strip_prefix("XP: ") {
+                stats.xp = v.replace(',', "").parse().ok();
+            } else if let Some(v) = line.strip_prefix("Coins: ") {
+                stats.coins = v.replace(',', "").parse().ok();
+            } else if let Some(v) = line.strip_prefix("Uccisioni: ") {
+                stats.kills = v.replace(',', "").parse().ok();
+            } else if let Some(v) = line.strip_prefix("Morti: ") {
+                stats.deaths = v.replace(',', "").parse().ok();
+            } else if let Some(v) = line.strip_prefix("K/D: ") {
+                stats.kd = v.parse().ok();
+            } else if let Some(v) = line.strip_prefix("Uccisioni finali: ") {
+                stats.final_kills = v.replace(',', "").parse().ok();
+            } else if let Some(v) = line.strip_prefix("Morti finali: ") {
+                stats.final_deaths = v.replace(',', "").parse().ok();
+            } else if let Some(v) = line.strip_prefix("FK/FD: ") {
+                stats.fk_fd = v.parse().ok();
+            } else if let Some(v) = line.strip_prefix("Letti distrutti: ") {
+                stats.beds_broken = v.replace(',', "").parse().ok();
+            } else if let Some(v) = line.strip_prefix("Partite vinte: ") {
+                let parts: Vec<_> = v.split_whitespace().collect();
+                if let Some(win_loss) = parts.first() {
+                    let mut wl = win_loss.split('/');
+                    stats.wins = wl.next().and_then(|v| v.replace(',', "").parse().ok());
+                    stats.losses = wl.next().and_then(|v| v.replace(',', "").parse().ok());
+                }
+
+                if let Some(rate) = parts.get(1) {
+                    stats.winrate = rate
+                        .trim_matches(|c| c == '(' || c == ')' || c == '%')
+                        .parse()
+                        .ok();
+                }
+            } else if let Some(v) = line.strip_prefix("Divisione: ") {
+                if let Some((name, _)) = v.split_once('(') {
+                    stats.division = Some(name.trim().to_string());
+                }
+            } else if let Some(v) = line.strip_prefix("XP Divisione: ") {
+                stats.division_xp = v.replace(',', "").parse().ok();
+            } else if let Some(v) = line.strip_prefix("Winstreak/Max winstreak: ") {
+                let mut parts = v.split('/');
+                stats.winstreak = parts.next().and_then(|v| v.trim().parse().ok());
+                stats.max_winstreak = parts.next().and_then(|v| v.trim().parse().ok());
+            }
+        }
+
+        stats
+    }
+    pub fn player_stats_to_llm_text(&self) -> String {
+        let mut parts = Vec::new();
+
+        if let Some(level) = self.level {
+            parts.push(format!("level {level}"));
+        }
+
+        if let Some(coins) = self.coins {
+            parts.push(format!("{coins} coins"));
+        }
+
+        if let (Some(k), Some(d)) = (self.kills, self.deaths) {
+            if let Some(kd) = self.kd {
+                parts.push(format!("{k} kills and {d} deaths (K/D {kd:.2})"));
+            } else {
+                parts.push(format!("{k} kills and {d} deaths"));
+            }
+        }
+
+        if let (Some(fk), Some(fd)) = (self.final_kills, self.final_deaths) {
+            if let Some(r) = self.fk_fd {
+                parts.push(format!(
+                    "{fk} final kills and {fd} final deaths (FK/FD {r:.2})"
+                ));
+            } else {
+                parts.push(format!("{fk} final kills and {fd} final deaths"));
+            }
+        }
+
+        if let Some(beds) = self.beds_broken {
+            parts.push(format!("{beds} beds broken"));
+        }
+
+        if let (Some(w), Some(l)) = (self.wins, self.losses) {
+            if let Some(rate) = self.winrate {
+                parts.push(format!("{w} wins and {l} losses ({rate:.2}% winrate)"));
+            } else {
+                parts.push(format!("{w} wins and {l} losses"));
+            }
+        }
+
+        if let Some(div) = &self.division {
+            if let Some(xp) = self.division_xp {
+                parts.push(format!("division {div} with {xp} division XP"));
+            } else {
+                parts.push(format!("division {div}"));
+            }
+        }
+
+        if let Some(ws) = self.winstreak {
+            if let Some(max) = self.max_winstreak {
+                parts.push(format!("current winstreak {ws} (max {max})"));
+            } else {
+                parts.push(format!("winstreak {ws}"));
+            }
+        }
+
+        format!("Player stats: {}.", parts.join(", "))
+    }
+}
+
 pub struct GetStats<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> GetStats<'a, 'b> {
@@ -967,24 +1203,14 @@ impl ToolCallFn for GetStats<'_, '_> {
         self.0.chat(format!("/stats {username}"));
         let past_messages = self.1.messages.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            let past_messages = past_messages.lock().await;
             let past_messages = past_messages
-                .lock()
-                .await
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(10)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
-                .fold(String::new(), |mut acc, v| {
-                    _ = writeln!(&mut acc, "{v}");
-                    acc
-                });
-            format!(
-                "Sent stats request, here is the chat history after the request:\n {past_messages}"
-            )
+                .filter(|v| !is_spam_message(&v.to_string()))
+                .take(25);
+            let stats = PlayerStats::parse_from_chat(past_messages.map(ToString::to_string));
+            stats.player_stats_to_llm_text()
         })
     }
 
