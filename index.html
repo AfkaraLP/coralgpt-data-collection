@@ -449,7 +449,8 @@
 
         function isBlocked(message) {
             if (!blocklistEnabled) return false;
-            const lower = message.toLowerCase();
+            const msgStr = String(message);
+            const lower = msgStr.toLowerCase();
             for (const word of blocklist) {
                 if (lower.includes(word.toLowerCase())) {
                     return true;
@@ -470,8 +471,22 @@
             return div.innerHTML;
         }
 
+        function extractText(data) {
+            if (typeof data === 'string') return data;
+            if (data && typeof data === 'object') {
+                let text = data.text || '';
+                if (data.extra && Array.isArray(data.extra)) {
+                    for (const part of data.extra) {
+                        text += extractText(part);
+                    }
+                }
+                return text;
+            }
+            return String(data);
+        }
+
         function renderMessages(messages) {
-            const filtered = messages.filter(msg => !isBlocked(msg));
+            const filtered = messages.filter(msg => !isBlocked(String(msg)));
 
             if (filtered.length === 0) {
                 messagesEl.innerHTML = '<div class="messages-empty"><span>No messages yet</span></div>';
@@ -481,7 +496,7 @@
             const wasAtBottom = messagesEl.scrollHeight - messagesEl.scrollTop <= messagesEl.clientHeight + 50;
 
             messagesEl.innerHTML = filtered.map(msg =>
-                `<div class="message message-received"><div class="message-bubble">${formatMessage(msg)}</div></div>`
+                `<div class="message message-received"><div class="message-bubble">${formatMessage(String(msg))}</div></div>`
             ).join('');
 
             if (wasAtBottom) {
@@ -574,7 +589,7 @@
                     renderMessages(allMessages);
                     break;
                 case 'newMessage':
-                    allMessages.push(msg.data);
+                    allMessages.push(extractText(msg.data));
                     if (allMessages.length > 1000) {
                         allMessages.shift();
                     }
@@ -705,10 +720,11 @@
         // Periodically refresh player list
         setInterval(() => wsSend({ type: 'tab' }), 10000);
 
-        // Initialize WebSocket connection
-        connectWebSocket();
-
-        loadBlocklist();
+        // Initialize
+        (async () => {
+            await loadBlocklist();
+            connectWebSocket();
+        })();
     </script>
 </body>
 </html>
