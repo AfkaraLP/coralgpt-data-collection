@@ -18,9 +18,10 @@ use crate::ENV_VARS;
 use crate::agent::openai_client::{ChatCompletionMessageParam, ToolMap};
 use crate::bot::tools::{
     AcceptFriendRequest, AddFriend, DeclineFriendRequest, GetCurrentPosition, GetInventory,
-    GetNearbyBlocks, GetPartyInfo, GetStats, InviteParty, JoinParty, LeaveParty, NearbyBlockKinds,
-    PathFind, QuickCommand, ReadChatHistory, ReadTabList, RemoveFriend, RespondToUser, RunCommand,
-    SelectHotbarSlot, SendChatMessage, SendDirectMessage, SendPartyMessage, Sleep, StopAgentLoop,
+    GetNearbyBlocks, GetPartyInfo, GetStats, InviteParty, JoinGame, JoinParty, LeaveParty,
+    NearbyBlockKinds, PathFind, QuickCommand, ReadChatHistory, ReadTabList, RemoveFriend,
+    RespondToUser, RunCommand, SelectHotbarSlot, SendChatMessage, SendDirectMessage,
+    SendPartyMessage, Sleep, StopAgentLoop,
 };
 use crate::{State, message::Message, server::WsServerMessage};
 
@@ -165,6 +166,7 @@ async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str) {
             .register_tool(SelectHotbarSlot::new(bot))
             .register_tool(JoinParty::new(bot, state))
             .register_tool(InviteParty::new(bot, state))
+            .register_tool(JoinGame::new(bot, state))
             .register_tool(SendPartyMessage::new(bot, state))
             .register_tool(LeaveParty::new(bot, state))
             .register_tool(GetPartyInfo::new(bot, state))
@@ -307,6 +309,7 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
             .register_tool(GetInventory::new(bot))
             .register_tool(SelectHotbarSlot::new(bot))
             .register_tool(JoinParty::new(bot, state))
+            .register_tool(JoinGame::new(bot, state))
             .register_tool(InviteParty::new(bot, state))
             .register_tool(SendPartyMessage::new(bot, state))
             .register_tool(LeaveParty::new(bot, state))
@@ -321,6 +324,9 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
             tools_map,
         )
         .await;
+    }
+    if ENV_VARS.openai_client.is_none() {
+        bot.chat(format!("/msg {username} No AI Client, cannot run agent..."));
     }
 }
 
@@ -410,7 +416,7 @@ impl AiFunctionality for Client {
                 .iter()
                 .any(|m| m.content.contains("/stopagentloop"))
             {
-                bot.chat(format!("/msg {username} stopped agent loop..."));
+                bot.chat(format!("/msg {username} Stopping Agent Loop..."));
                 break;
             }
             if messages.len() > 15 {
@@ -439,12 +445,25 @@ impl AiFunctionality for Client {
                     },
                 ];
             }
+            println!(
+                "[LLM] we are sending messages: \n\n{}",
+                messages.iter().fold(String::new(), |mut acc, v| {
+                    _ = writeln!(&mut acc, "{v}");
+                    acc
+                })
+            );
             let comp = ai_client.get_completion(&messages, &tools_map).await;
             let Ok(completion) = comp else {
+                bot.chat(format!(
+                    "/msg {username}, No Completion Found, Stopping Agent Loop..."
+                ));
                 println!("breaking agentic loop because there was no completion");
                 break;
             };
             let Some(first) = completion.choices.first() else {
+                bot.chat(format!(
+                    "/msg {username}, No Completion Found, Stopping Agent Loop..."
+                ));
                 println!("breaking agentic loop because there was no first completion");
                 break;
             };
@@ -472,6 +491,12 @@ impl AiFunctionality for Client {
                         "{name} output: \n\n{answer}",
                         name = tool.get_name()
                     );
+                } else {
+                    _ = writeln!(
+                        &mut tool_responses,
+                        "{} does not exist",
+                        &tool_call.function.name
+                    );
                 }
             }
             if !tool_responses.is_empty() {
@@ -480,14 +505,6 @@ impl AiFunctionality for Client {
                     role: crate::agent::openai_client::AIChatRole::Tool,
                 });
             }
-
-            println!(
-                "[LLM] we sent messages: \n\n{}",
-                messages.iter().fold(String::new(), |mut acc, v| {
-                    _ = writeln!(&mut acc, "{v}");
-                    acc
-                })
-            );
         }
     }
 }

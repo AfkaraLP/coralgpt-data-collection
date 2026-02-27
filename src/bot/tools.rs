@@ -7,6 +7,7 @@ use azalea::{
 };
 use std::{fmt::Write, pin::Pin, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, time::Instant};
+
 const ONE_POINT_EIGHT_MIN_Y: i32 = 0;
 
 pub trait IntoPinBoxString<'a>: Sized + Send + ToString + 'a {
@@ -276,6 +277,8 @@ impl ToolCallFn for Sleep<'_> {
                     let message_state = self.0.messages.clone();
                     Box::pin(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(num)).await;
+                        let past_messages_count: usize =
+                            num.try_into().unwrap_or(25_usize).div_ceil(5);
 
                         let past_messages = message_state
                             .lock()
@@ -283,7 +286,7 @@ impl ToolCallFn for Sleep<'_> {
                             .iter()
                             .map(ToString::to_string)
                             .filter(|v| !is_spam_message(v))
-                            .take(15)
+                            .take(past_messages_count)
                             .collect::<Vec<String>>()
                             .iter()
                             .rev()
@@ -292,7 +295,7 @@ impl ToolCallFn for Sleep<'_> {
                                 acc
                             });
                         format!(
-                            "slept for {num} seconds, past few chat messages:\n {past_messages}"
+                            "slept for {num} seconds, past {past_messages_count} chat messages:\n {past_messages}"
                         )
                     })
                 } else {
@@ -358,6 +361,8 @@ impl ToolCallFn for JoinParty<'_, '_> {
                 });
             if past_messages.contains("entrato nel party!") {
                 "Successfully joined party".into()
+            } else if past_messages.contains("Non hai richieste da parte di questo giocatore.") {
+                "You don't have a party request from that player.".into()
             } else {
                 format!("Failed joining party, chat history:\n\n{past_messages}")
             }
@@ -468,27 +473,35 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
                 .into_pin_box_string();
         }
         let message_state = self.1.messages.clone();
-        let mut response = String::new();
         let username = username.clone();
         self.0.chat(format!("/msg {username} {message}"));
         Box::pin(async move {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let past_messages = message_state
+
+            let messages: Vec<String> = message_state
                 .lock()
                 .await
                 .iter()
                 .map(ToString::to_string)
                 .filter(|v| !is_spam_message(v))
                 .take(10)
-                .collect::<Vec<String>>()
+                .collect();
+
+            if messages
                 .iter()
                 .rev()
-                .fold(String::new(), |mut acc, s| {
-                    _ = writeln!(&mut acc, "{s}");
-                    acc
-                });
-            response.push_str(&past_messages);
-            response
+                .take(3)
+                .any(|m| m.contains("Questo giocatore non risulta online!"))
+            {
+                return format!("failed: player `{username}` is not online or does not exist");
+            }
+
+            let past_messages = messages.iter().rev().fold(String::new(), |mut acc, s| {
+                _ = writeln!(&mut acc, "{s}");
+                acc
+            });
+
+            format!("Sent direct message, past 10 chat messages: {past_messages}",)
         })
     }
 
@@ -625,9 +638,7 @@ impl ToolCallFn for SelectHotbarSlot<'_> {
         let Some(number) = index.as_u64() else {
             return "the provided index has to be an unsigned integer".into_pin_box_string();
         };
-        if number > 8 {
-            return "the provided index has to be in range 0..=8".into_pin_box_string();
-        }
+        let number = number.rem_euclid(9);
         self.0
             .set_selected_hotbar_slot(number.try_into().unwrap_or_default());
         format!("selected hotbar slot {number}").into_pin_box_string()
@@ -691,6 +702,9 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
                     _ = writeln!(&mut acc, "{s}");
                     acc
                 });
+            if chat_history.contains("Non sei in nessun party!") {
+                return "You are not in a party!".into();
+            }
             response.push_str(&chat_history);
             response
         })
@@ -1175,7 +1189,7 @@ impl PlayerStats {
             }
         }
 
-        format!("Player stats: {}.", parts.join(", "))
+        parts.join(", ")
     }
 }
 
@@ -1202,6 +1216,7 @@ impl ToolCallFn for GetStats<'_, '_> {
         };
         self.0.chat(format!("/stats {username}"));
         let past_messages = self.1.messages.clone();
+        let username = username.clone();
         Box::pin(async move {
             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
             let past_messages = past_messages.lock().await;
@@ -1210,7 +1225,7 @@ impl ToolCallFn for GetStats<'_, '_> {
                 .filter(|v| !is_spam_message(&v.to_string()))
                 .take(25);
             let stats = PlayerStats::parse_from_chat(past_messages.map(ToString::to_string));
-            stats.player_stats_to_llm_text()
+            format!("{username}'s stats: {}", stats.player_stats_to_llm_text())
         })
     }
 
@@ -1391,6 +1406,10 @@ impl ToolCallFn for PathFind<'_> {
         let Some(z) = arg_to_i32(args, "z") else {
             return "Please provie a valid z position in the arguments".into_pin_box_string();
         };
+        let time_to_reach_goal = args
+            .get("time_to_reach_goal")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(10);
         let bot = self.0.clone();
         Box::pin(async move {
             let goto_bot = bot.clone();
@@ -1416,24 +1435,37 @@ impl ToolCallFn for PathFind<'_> {
             .is_err()
             {
                 goto_thread.abort();
-                return "failed: path calculation timeout".into();
+                return format!("Failed going to [{x},{y},{z}] due to timeout.");
             }
 
             let start = Instant::now();
 
             let response = loop {
-                let dist = bot.position().distance_to(Vec3 {
+                let bot_position = bot.position();
+                let dist = bot_position.distance_to(Vec3 {
                     x: f64::from(x),
                     y: f64::from(y),
                     z: f64::from(z),
                 });
+
                 if dist <= 1.5 {
                     bot.stop_pathfinding();
-                    break "success: reached goal".into();
+                    break format!("Reached goal near [{x},{y},{z}] (distance {dist:.2})");
                 }
 
-                if start.elapsed() > Duration::from_secs(10) {
-                    break format!("failed: goal not reached in 10 seconds (distance {dist:.2})");
+                if goto_thread.is_finished() {
+                    break format!(
+                        "Pathfinder stopped before reaching [{x},{y},{z}] (distance {dist:.2}, current position: [{:.0},{:.0},{:.0}])",
+                        bot_position.x, bot_position.y, bot_position.z
+                    );
+                }
+
+                if start.elapsed() > Duration::from_secs(time_to_reach_goal) {
+                    bot.stop_pathfinding();
+                    break format!(
+                        "Timeout reaching [{x},{y},{z}] after {time_to_reach_goal}s (distance {dist:.2}, current position: [{:.0},{:.0},{:.0}])",
+                        bot_position.x, bot_position.y, bot_position.z
+                    );
                 }
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1463,6 +1495,12 @@ impl ToolCallFn for PathFind<'_> {
                 "z",
                 crate::agent::tool::ToolCallArgType::Number,
                 "the z coordinate of the position to pathfind to as signed integer",
+            ),
+            ToolCallArgDescriptor::new(
+                true,
+                "time_to_reach_goal",
+                crate::agent::tool::ToolCallArgType::Number,
+                "The estimated time in seconds it should take you to reach that goal.",
             ),
         ]
     }
@@ -1754,9 +1792,9 @@ impl ToolCallFn for QuickCommand<'_, '_> {
             return "please provide a command".into_pin_box_string();
         };
         let exc_comm = match command.trim() {
-            "pinfo" => {
-                self.0.chat("/p info");
-                "executed party info command."
+            "spawn" => {
+                self.0.chat("/spawn");
+                "teleported to spawn."
             }
             "playtwo" => {
                 self.0.chat("/play two");
@@ -1808,11 +1846,69 @@ impl ToolCallFn for QuickCommand<'_, '_> {
             crate::agent::tool::ToolCallArgType::String,
             "quickcommand, choice of one of these choices:
 
-pinfo: get party info
+spawn: teleport to the lobby spawn location
 playtwo: join a duo game
 playthree: join a trio game
 stats: get your own stats
 ping: get your current ping",
+        )]
+    }
+}
+
+pub struct JoinGame<'a, 'b>(&'a Client, &'b State);
+
+impl<'a, 'b> JoinGame<'a, 'b> {
+    pub fn new(client: &'a Client, state: &'b State) -> Self {
+        Self(client, state)
+    }
+}
+
+impl ToolCallFn for JoinGame<'_, '_> {
+    fn get_name(&self) -> &'static str {
+        "join_game"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "join someone's private game"
+    }
+
+    fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let Some(serde_json::Value::String(username)) = args.get("username") else {
+            return "Please provide the username of the player whose game you want to join."
+                .into_pin_box_string();
+        };
+
+        let past_messages = self.1.messages.clone();
+        self.0.chat(format!("/join {username}"));
+        Box::pin(async move {
+            let past_messages = past_messages
+                .lock()
+                .await
+                .iter()
+                .map(ToString::to_string)
+                .filter(|v| !is_spam_message(v))
+                .take(5)
+                .collect::<Vec<String>>()
+                .iter()
+                .rev()
+                .fold(String::new(), |mut acc, s| {
+                    _ = writeln!(&mut acc, "{s}");
+                    acc
+                });
+            if past_messages.contains("Nessun server privato trovato per quel giocatore.") {
+                "This player is not hosting a private game".into()
+            } else {
+                "Successfully joined private game.".into()
+            }
+        })
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor::new(
+            true,
+            "username",
+            crate::agent::tool::ToolCallArgType::String,
+            "whose private game to join",
         )]
     }
 }
