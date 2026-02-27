@@ -486,7 +486,7 @@
         }
 
         function renderMessages(messages) {
-            const filtered = messages.filter(msg => !isBlocked(String(msg)));
+            const filtered = messages.filter(msg => !isBlocked(extractText(msg)));
 
             if (filtered.length === 0) {
                 messagesEl.innerHTML = '<div class="messages-empty"><span>No messages yet</span></div>';
@@ -496,7 +496,7 @@
             const wasAtBottom = messagesEl.scrollHeight - messagesEl.scrollTop <= messagesEl.clientHeight + 50;
 
             messagesEl.innerHTML = filtered.map(msg =>
-                `<div class="message message-received"><div class="message-bubble">${formatMessage(String(msg))}</div></div>`
+                `<div class="message message-received"><div class="message-bubble">${formatMessage(msg)}</div></div>`
             ).join('');
 
             if (wasAtBottom) {
@@ -589,7 +589,7 @@
                     renderMessages(allMessages);
                     break;
                 case 'newMessage':
-                    allMessages.push(extractText(msg.data));
+                    allMessages.push(msg.data);
                     if (allMessages.length > 1000) {
                         allMessages.shift();
                     }

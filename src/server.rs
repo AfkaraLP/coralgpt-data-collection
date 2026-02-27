@@ -44,7 +44,7 @@ pub enum WsServerMessage {
     #[serde(rename = "messages")]
     Messages(Vec<String>),
     #[serde(rename = "newMessage")]
-    NewMessage(FormattedText),
+    NewMessage(String),
     #[serde(rename = "players")]
     Players(Vec<String>),
     #[serde(rename = "slot")]

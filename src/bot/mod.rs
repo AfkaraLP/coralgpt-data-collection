@@ -250,7 +250,7 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         messages.push(message.message());
     }
     if let Some(ref broadcaster) = state.broadcaster {
-        broadcaster.send(WsServerMessage::NewMessage(message.message()));
+        broadcaster.send(WsServerMessage::NewMessage(message.message().to_html()));
     }
     let message = message.message().to_string();
     if is_dm_message(&message) {
