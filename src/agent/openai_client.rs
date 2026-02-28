@@ -68,7 +68,7 @@ impl OpenAIClient {
                 Some(req_tools)
             },
             messages: messages.to_vec(),
-            temperature: Some(0.4),
+            temperature: Some(0.67),
         };
         let mut reqbuilder = self
             .client

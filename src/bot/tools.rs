@@ -21,6 +21,7 @@ impl<'a, T: Sized + Send + ToString + 'a> IntoPinBoxString<'a> for T {}
 use crate::{
     ENV_VARS, State,
     agent::tool::{ToolCallArgDescriptor, ToolCallFn},
+    buffer::ChatFifoOps,
     is_spam_message,
 };
 
@@ -69,13 +70,8 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 8)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(8)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, s| {
                     _ = writeln!(&mut acc, "{s}");
                     acc
@@ -136,13 +132,8 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 5)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(5)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, s| {
                     _ = writeln!(&mut acc, "{s}");
                     acc
@@ -283,13 +274,8 @@ impl ToolCallFn for Sleep<'_> {
                         let past_messages = message_state
                             .lock()
                             .await
+                            .get_past_n_messages(false, past_messages_count)
                             .iter()
-                            .map(ToString::to_string)
-                            .filter(|v| !is_spam_message(v))
-                            .take(past_messages_count)
-                            .collect::<Vec<String>>()
-                            .iter()
-                            .rev()
                             .fold(String::new(), |mut acc, s| {
                                 _ = writeln!(&mut acc, "{s}");
                                 acc
@@ -348,13 +334,8 @@ impl ToolCallFn for JoinParty<'_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 5)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(5)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, v| {
                     _ = writeln!(&mut acc, "{v}");
                     acc
@@ -407,13 +388,8 @@ impl ToolCallFn for InviteParty<'_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 5)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(5)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, v| {
                     _ = writeln!(&mut acc, "{v}");
                     acc
@@ -691,13 +667,8 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
             let chat_history = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 5)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(5)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, s| {
                     _ = writeln!(&mut acc, "{s}");
                     acc
@@ -749,13 +720,8 @@ impl ToolCallFn for LeaveParty<'_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 5)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(5)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, v| {
                     _ = writeln!(&mut acc, "{v}");
                     acc
@@ -897,13 +863,8 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
             let past_messages = message_queue
                 .lock()
                 .await
+                .get_past_n_messages(false, 6)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(6)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, v| {
                     if v.contains("Party di")
                         && v.contains("Membri:")
@@ -958,13 +919,8 @@ impl ToolCallFn for AddFriend<'_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 5)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(5)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, v| {
                     _ = writeln!(&mut acc, "{v}");
                     acc
@@ -1020,13 +976,8 @@ impl ToolCallFn for RemoveFriend<'_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 5)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(5)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, v| {
                     _ = writeln!(&mut acc, "{v}");
                     acc
@@ -1733,13 +1684,8 @@ impl ToolCallFn for RunCommand<'_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 3)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(3)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, s| {
                     _ = writeln!(&mut acc, "{s}");
                     acc
@@ -1823,13 +1769,8 @@ impl ToolCallFn for QuickCommand<'_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 8)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(8)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, s| {
                     _ = writeln!(&mut acc, "{s}");
                     acc
@@ -1884,13 +1825,8 @@ impl ToolCallFn for JoinGame<'_, '_> {
             let past_messages = past_messages
                 .lock()
                 .await
+                .get_past_n_messages(false, 5)
                 .iter()
-                .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
-                .take(5)
-                .collect::<Vec<String>>()
-                .iter()
-                .rev()
                 .fold(String::new(), |mut acc, s| {
                     _ = writeln!(&mut acc, "{s}");
                     acc

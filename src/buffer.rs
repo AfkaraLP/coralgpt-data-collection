@@ -1,5 +1,9 @@
 use std::{collections::VecDeque, ops::Deref};
 
+use azalea::FormattedText;
+
+use crate::is_spam_message;
+
 #[derive(Clone, Default, Debug)]
 pub struct FifoBuffer<const N: usize, T> {
     buf: VecDeque<T>,
@@ -29,5 +33,24 @@ impl<const N: usize, T> Deref for FifoBuffer<N, T> {
 
     fn deref(&self) -> &Self::Target {
         &self.buf
+    }
+}
+
+pub trait ChatFifoOps {
+    fn get_past_n_messages(&self, verbose: bool, n: usize) -> Vec<String>;
+    // fn iter_past_n_messages(&self, verbose: bool, n: usize) -> impl Iterator<Item = String>;
+}
+
+impl<const N: usize> ChatFifoOps for FifoBuffer<N, FormattedText> {
+    fn get_past_n_messages(&self, verbose: bool, n: usize) -> Vec<String> {
+        self.iter()
+            .map(ToString::to_string)
+            .filter(|v| !is_spam_message(v) || verbose)
+            .take(n)
+            .collect::<Vec<String>>()
+            .iter()
+            .rev()
+            .map(ToOwned::to_owned)
+            .collect()
     }
 }
