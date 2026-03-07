@@ -469,14 +469,13 @@ impl AiFunctionality for Client {
             };
             let tool_calls = &first.message.tool_calls;
             let agent_response_content = first.message.content.clone().unwrap_or_default();
-            if !agent_response_content.is_empty() || tool_calls.is_empty() {
+            if !agent_response_content.is_empty() {
                 messages.push(ChatCompletionMessageParam {
                     content: agent_response_content,
                     role: crate::agent::openai_client::AIChatRole::Assistant,
                 });
             }
 
-            let mut tool_responses = String::new();
             for tool_call in tool_calls {
                 if let Some(tool) = tools_map.get(&tool_call.function.name) {
                     let answer = tool
@@ -486,24 +485,19 @@ impl AiFunctionality for Client {
                         )
                         .await;
                     tokio::time::sleep(tool.get_timeout_wait()).await;
-                    _ = writeln!(
-                        &mut tool_responses,
-                        "{name} output: \n\n{answer}",
-                        name = tool.get_name()
-                    );
+
+                    let answer = format!("{name} output: \n\n{answer}");
+                    messages.push(ChatCompletionMessageParam {
+                        content: answer,
+                        role: crate::agent::openai_client::AIChatRole::Tool,
+                    });
                 } else {
-                    _ = writeln!(
-                        &mut tool_responses,
-                        "{} does not exist",
-                        &tool_call.function.name
-                    );
+                    let answer = format!("{} does not exist", &tool_call.function.name);
+                    messages.push(ChatCompletionMessageParam {
+                        content: answer,
+                        role: crate::agent::openai_client::AIChatRole::Tool,
+                    });
                 }
-            }
-            if !tool_responses.is_empty() {
-                messages.push(ChatCompletionMessageParam {
-                    content: tool_responses,
-                    role: crate::agent::openai_client::AIChatRole::Tool,
-                });
             }
         }
     }
