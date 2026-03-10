@@ -10,6 +10,7 @@ use azalea::{
     WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
     registry::builtin::ItemKind,
 };
+use piperize::piperize;
 use regex::Regex;
 use tokio::sync::Mutex;
 use tokio::{sync::mpsc::Sender, time};
@@ -140,7 +141,9 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
 
 static DM_MSG_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(Da \w{3,16}\) .*$").unwrap());
-pub fn is_dm_message(msg: impl AsRef<str>) -> bool {
+
+#[piperize]
+pub fn is_dm_message<S: AsRef<str>>(msg: S) -> bool {
     DM_MSG_REGEX.is_match(msg.as_ref())
 }
 
@@ -469,7 +472,12 @@ impl AiFunctionality for Client {
             };
             let tool_calls = &first.message.tool_calls;
             let agent_response_content = first.message.content.clone().unwrap_or_default();
-            if !agent_response_content.is_empty() {
+            if agent_response_content.is_empty() {
+                messages.push(ChatCompletionMessageParam {
+                    content: String::from("Nothing to say..."),
+                    role: crate::agent::openai_client::AIChatRole::Assistant,
+                });
+            } else {
                 messages.push(ChatCompletionMessageParam {
                     content: agent_response_content,
                     role: crate::agent::openai_client::AIChatRole::Assistant,
@@ -486,13 +494,12 @@ impl AiFunctionality for Client {
                         .await;
                     tokio::time::sleep(tool.get_timeout_wait()).await;
 
-                    let answer = format!("{name} output: \n\n{answer}");
                     messages.push(ChatCompletionMessageParam {
                         content: answer,
                         role: crate::agent::openai_client::AIChatRole::Tool,
                     });
                 } else {
-                    let answer = format!("{} does not exist", &tool_call.function.name);
+                    let answer = format!("{} tool does not exist", &tool_call.function.name);
                     messages.push(ChatCompletionMessageParam {
                         content: answer,
                         role: crate::agent::openai_client::AIChatRole::Tool,

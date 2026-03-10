@@ -7,6 +7,7 @@ use azalea::{
     prelude::{Account, Component},
 };
 use azalea::{FormattedText, prelude::*};
+use piperize::piperize;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::signal;
@@ -96,10 +97,11 @@ impl State {
 }
 
 #[must_use]
-pub fn is_spam_message(m: &str) -> bool {
-    m.contains("è entrato nella lobby.")
-        || m.starts_with("CORALMC")
-        || m.contains("Login eseguito con successo.")
+#[piperize]
+pub fn is_spam_message<S: AsRef<str>>(m: S) -> bool {
+    m.as_ref().contains("è entrato nella lobby.")
+        || m.as_ref().starts_with("CORALMC")
+        || m.as_ref().contains("Login eseguito con successo.")
 }
 
 #[actix_web::main]
@@ -191,6 +193,7 @@ async fn shutdown_signal() {
 /// # Errors
 ///
 /// - shouldn't fail, opens db on path and instantiates it if it doesn't exist
+#[piperize]
 pub fn instantiate_db(path: &str) -> rusqlite::Result<rusqlite::Connection> {
     let connection = rusqlite::Connection::open(path)?;
     connection.execute(

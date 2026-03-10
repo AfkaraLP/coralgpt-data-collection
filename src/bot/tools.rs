@@ -19,10 +19,9 @@ pub trait IntoPinBoxString<'a>: Sized + Send + ToString + 'a {
 impl<'a, T: Sized + Send + ToString + 'a> IntoPinBoxString<'a> for T {}
 
 use crate::{
-    ENV_VARS, State,
+    ENV_VARS, IsSpamMessage__PiperizeTrait, State,
     agent::tool::{ToolCallArgDescriptor, ToolCallFn},
     buffer::ChatFifoOps,
-    is_spam_message,
 };
 
 pub struct SendChatMessage<'a, 'b>(&'a Client, &'b State);
@@ -234,7 +233,7 @@ impl ToolCallFn for ReadChatHistory<'_> {
                 .await
                 .iter()
                 .map(ToString::to_string)
-                .filter(|v| verbose || !is_spam_message(v))
+                .filter(|v| verbose || !v.is_spam_message())
                 .take(num_messages.try_into().unwrap_or(20))
                 .fold(String::new(), |mut acc, v| {
                     _ = writeln!(&mut acc, "{v}");
@@ -459,7 +458,7 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
                 .await
                 .iter()
                 .map(ToString::to_string)
-                .filter(|v| !is_spam_message(v))
+                .filter(|v| !v.is_spam_message())
                 .take(10)
                 .collect();
 
@@ -1173,7 +1172,7 @@ impl ToolCallFn for GetStats<'_, '_> {
             let past_messages = past_messages.lock().await;
             let past_messages = past_messages
                 .iter()
-                .filter(|v| !is_spam_message(&v.to_string()))
+                .filter(|v| !v.to_string().is_spam_message())
                 .take(25);
             let stats = PlayerStats::parse_from_chat(past_messages.map(ToString::to_string));
             format!("{username}'s stats: {}", stats.player_stats_to_llm_text())
@@ -1269,7 +1268,7 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
                     }
 
                     let block = Box::<dyn azalea::block::BlockTrait>::from(block);
-                    let kind = block.as_registry_block().to_string();
+                    let kind = block.as_block_kind().to_string();
 
                     if requested_block.as_ref().is_some_and(|r| r != &kind) {
                         continue;
@@ -1543,7 +1542,7 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
                     }
 
                     let block = Box::<dyn azalea::block::BlockTrait>::from(block);
-                    let kind = block.as_registry_block().to_string();
+                    let kind = block.as_block_kind().to_string();
                     let kind = kind.split_once(':').map_or(kind.as_str(), |v| v.1);
                     if !found_blocks.contains(kind) {
                         _ = writeln!(&mut found_blocks, "{kind}");
