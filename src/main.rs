@@ -80,6 +80,7 @@ pub struct State {
 }
 
 impl State {
+    #[must_use]
     pub fn new(
         recv_instruction: Receiver<Instruction>,
         conn: rusqlite::Connection,
