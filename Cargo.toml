@@ -19,3 +19,4 @@ dotenv = "0.15.0"
 regex = "1.12.3"
 serde = { version = "1.0.228", features = ["derive"] }
 piperize = "0.1.8"
+openai-client = { git = "https://github.com/AfkaraLP/openai-client.git", version = "0.1.0" }

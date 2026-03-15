@@ -13,7 +13,6 @@ use std::time::Duration;
 use tokio::signal;
 use tokio::sync::{Mutex, mpsc::Receiver};
 
-use crate::agent::openai_client::OpenAIClient;
 use crate::buffer::FifoBuffer;
 use crate::server::{Broadcaster, MessageLog, bot_messages, ws_handler};
 use crate::{
@@ -22,8 +21,8 @@ use crate::{
         bot_agent, bot_chat, bot_get_slot, bot_jump, bot_slot, bot_sneak, bot_tab, bot_walk, index,
     },
 };
+use openai_client::OpenAIClient;
 
-mod agent;
 mod bot;
 mod buffer;
 mod message;
@@ -52,12 +51,7 @@ pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
             v.split_once('|')
                 .map(|(k, v)| (k.to_string(), v.to_string()))
         });
-        Some(OpenAIClient::new(
-            url,
-            reqwest::Client::new(),
-            model,
-            header_kv,
-        ))
+        Some(OpenAIClient::new(url, model, header_kv))
     } else {
         None
     };

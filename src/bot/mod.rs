@@ -10,23 +10,23 @@ use azalea::{
     WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
     registry::builtin::ItemKind,
 };
+use openai_client::OpenAIClient;
 use piperize::piperize;
 use regex::Regex;
-use tokio::sync::Mutex;
 use tokio::{sync::mpsc::Sender, time};
 
 use crate::ENV_VARS;
-use crate::agent::openai_client::{ChatCompletionMessageParam, ToolMap};
 use crate::bot::tools::{
     AcceptFriendRequest, AddFriend, DeclineFriendRequest, GetCurrentPosition, GetInventory,
     GetNearbyBlocks, GetPartyInfo, GetStats, InviteParty, JoinGame, JoinParty, LeaveParty,
     NearbyBlockKinds, PathFind, QuickCommand, ReadChatHistory, ReadTabList, RemoveFriend,
     RespondToUser, RunCommand, SelectHotbarSlot, SendChatMessage, SendDirectMessage,
-    SendPartyMessage, Sleep, StopAgentLoop,
+    SendPartyMessage, Sleep, SpawnSubAgent,
 };
 use crate::{State, message::Message, server::WsServerMessage};
+use openai_client::ToolMap;
 
-const SYSTEM_PROMPT: &str = include_str!("SYSTEM_PROMPT.txt");
+const SYSTEM_PROMPT: &str = include_str!("SYSTEM_PROMPT.md");
 #[derive(Default, Clone, Component)]
 pub enum Instruction {
     Chat(String),
@@ -132,7 +132,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
             bot.handle_message_event(message, &state).await;
         }
         Event::Tick => {
-            bot.handle_instruction(&state).await;
+            Arc::new(bot).handle_instruction(Arc::new(state)).await;
         }
         _ => {}
     }
@@ -149,42 +149,54 @@ pub fn is_dm_message<S: AsRef<str>>(msg: S) -> bool {
 }
 
 #[piperize]
-async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str) {
+async fn handle_agent_instruction(bot: Arc<Client>, state: Arc<State>, prompt: &str) {
     if let Some(ai_client) = &ENV_VARS.openai_client {
         let username = &ENV_VARS.username;
         let tools_map = ToolMap::new()
-            .register_tool(RespondToUser::new(bot, username, state))
-            .register_tool(Sleep::new(state))
-            .register_tool(SendDirectMessage::new(bot, state))
-            .register_tool(SendChatMessage::new(bot, state))
-            .register_tool(QuickCommand::new(bot, state))
-            .register_tool(RunCommand::new(bot, state))
-            .register_tool(NearbyBlockKinds::new(bot))
-            .register_tool(PathFind::new(bot))
-            .register_tool(GetCurrentPosition::new(bot))
-            .register_tool(GetStats::new(bot, state))
-            .register_tool(ReadChatHistory::new(state))
-            .register_tool(ReadTabList::new(bot))
-            .register_tool(AcceptFriendRequest::new(bot))
-            .register_tool(DeclineFriendRequest::new(bot))
-            .register_tool(GetInventory::new(bot))
-            .register_tool(SelectHotbarSlot::new(bot))
-            .register_tool(JoinParty::new(bot, state))
-            .register_tool(InviteParty::new(bot, state))
-            .register_tool(JoinGame::new(bot, state))
-            .register_tool(SendPartyMessage::new(bot, state))
-            .register_tool(LeaveParty::new(bot, state))
-            .register_tool(GetPartyInfo::new(bot, state))
-            .register_tool(AddFriend::new(bot, state))
-            .register_tool(GetNearbyBlocks::new(bot))
-            .register_tool(RemoveFriend::new(bot, state));
+            .register_tool(RespondToUser::new(
+                bot.clone(),
+                username.clone(),
+                state.clone(),
+            ))
+            .register_tool(SpawnSubAgent::new(Arc::new(
+                ToolMap::new()
+                    .register_tool(RespondToUser::new(
+                        bot.clone(),
+                        username.clone(),
+                        state.clone(),
+                    ))
+                    .register_tool(Sleep::new(&state))
+                    .register_tool(SendDirectMessage::new(&bot, &state))
+                    // .register_tool(SendChatMessage::new(&bot, &state))
+                    .register_tool(QuickCommand::new(&bot, &state))
+                    .register_tool(RunCommand::new(&bot, &state))
+                    .register_tool(NearbyBlockKinds::new(&bot))
+                    .register_tool(PathFind::new(&bot))
+                    .register_tool(GetCurrentPosition::new(&bot))
+                    .register_tool(GetStats::new(&bot, &state))
+                    .register_tool(ReadChatHistory::new(&state))
+                    .register_tool(ReadTabList::new(&bot))
+                    .register_tool(AcceptFriendRequest::new(&bot))
+                    .register_tool(DeclineFriendRequest::new(&bot))
+                    .register_tool(GetInventory::new(&bot))
+                    .register_tool(SelectHotbarSlot::new(&bot))
+                    .register_tool(JoinParty::new(&bot, &state))
+                    .register_tool(JoinGame::new(&bot, &state))
+                    .register_tool(InviteParty::new(&bot, &state))
+                    .register_tool(SendPartyMessage::new(&bot, &state))
+                    .register_tool(LeaveParty::new(&bot, &state))
+                    .register_tool(GetPartyInfo::new(&bot, &state))
+                    .register_tool(AddFriend::new(&bot, &state))
+                    .register_tool(GetNearbyBlocks::new(&bot))
+                    .register_tool(RemoveFriend::new(&bot, &state)),
+            )));
         bot.run_agent_loop(ai_client, prompt, username, tools_map)
             .await;
     }
 }
 
 #[piperize]
-async fn handle_instruction(bot: &Client, state: &State) {
+async fn handle_instruction(bot: Arc<Client>, state: Arc<State>) {
     let mut guard = state.recv_instruction.lock().await;
     if let Some(recv) = guard.as_mut()
         && let Some(instruction) = recv.recv().await
@@ -200,7 +212,7 @@ async fn handle_instruction(bot: &Client, state: &State) {
                 let _ = sender.send(bot.selected_hotbar_slot()).await;
             }
             Instruction::Agent(prompt) => {
-                bot.handle_agent_instruction(state, &prompt).await;
+                bot.handle_agent_instruction(state.clone(), &prompt).await;
             }
         }
     }
@@ -305,32 +317,46 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
     if let Some(ai_client) = &ENV_VARS.openai_client
         && message.starts_with("/agent")
     {
+        let bot = Arc::new(bot.clone());
+        let state = Arc::new(state.clone());
         let tools_map = ToolMap::new()
-            .register_tool(RespondToUser::new(bot, username, state))
-            .register_tool(Sleep::new(state))
-            .register_tool(SendDirectMessage::new(bot, state))
-            .register_tool(SendChatMessage::new(bot, state))
-            .register_tool(QuickCommand::new(bot, state))
-            .register_tool(RunCommand::new(bot, state))
-            .register_tool(NearbyBlockKinds::new(bot))
-            .register_tool(PathFind::new(bot))
-            .register_tool(GetCurrentPosition::new(bot))
-            .register_tool(GetStats::new(bot, state))
-            .register_tool(ReadChatHistory::new(state))
-            .register_tool(ReadTabList::new(bot))
-            .register_tool(AcceptFriendRequest::new(bot))
-            .register_tool(DeclineFriendRequest::new(bot))
-            .register_tool(GetInventory::new(bot))
-            .register_tool(SelectHotbarSlot::new(bot))
-            .register_tool(JoinParty::new(bot, state))
-            .register_tool(JoinGame::new(bot, state))
-            .register_tool(InviteParty::new(bot, state))
-            .register_tool(SendPartyMessage::new(bot, state))
-            .register_tool(LeaveParty::new(bot, state))
-            .register_tool(GetPartyInfo::new(bot, state))
-            .register_tool(AddFriend::new(bot, state))
-            .register_tool(GetNearbyBlocks::new(bot))
-            .register_tool(RemoveFriend::new(bot, state));
+            .register_tool(RespondToUser::new(
+                bot.clone(),
+                username.to_string(),
+                state.clone(),
+            ))
+            .register_tool(SpawnSubAgent::new(Arc::new(
+                ToolMap::new()
+                    .register_tool(RespondToUser::new(
+                        bot.clone(),
+                        username.to_string(),
+                        state.clone(),
+                    ))
+                    .register_tool(Sleep::new(&state))
+                    .register_tool(SendDirectMessage::new(&bot, &state))
+                    // .register_tool(SendChatMessage::new(&bot, &state))
+                    .register_tool(QuickCommand::new(&bot, &state))
+                    .register_tool(RunCommand::new(&bot, &state))
+                    .register_tool(NearbyBlockKinds::new(&bot))
+                    .register_tool(PathFind::new(&bot))
+                    .register_tool(GetCurrentPosition::new(&bot))
+                    .register_tool(GetStats::new(&bot, &state))
+                    .register_tool(ReadChatHistory::new(&state))
+                    .register_tool(ReadTabList::new(&bot))
+                    .register_tool(AcceptFriendRequest::new(&bot))
+                    .register_tool(DeclineFriendRequest::new(&bot))
+                    .register_tool(GetInventory::new(&bot))
+                    .register_tool(SelectHotbarSlot::new(&bot))
+                    .register_tool(JoinParty::new(&bot, &state))
+                    .register_tool(JoinGame::new(&bot, &state))
+                    .register_tool(InviteParty::new(&bot, &state))
+                    .register_tool(SendPartyMessage::new(&bot, &state))
+                    .register_tool(LeaveParty::new(&bot, &state))
+                    .register_tool(GetPartyInfo::new(&bot, &state))
+                    .register_tool(AddFriend::new(&bot, &state))
+                    .register_tool(GetNearbyBlocks::new(&bot))
+                    .register_tool(RemoveFriend::new(&bot, &state)),
+            )));
         bot.run_agent_loop(
             ai_client,
             message.strip_prefix("/agent").unwrap_or(message),
@@ -389,7 +415,7 @@ async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket,
 pub trait AiFunctionality {
     async fn run_agent_loop(
         &self,
-        ai_client: &crate::agent::openai_client::OpenAIClient,
+        ai_client: &OpenAIClient,
         prompt: &str,
         username: &str,
         tools_map: ToolMap<'_>,
@@ -400,125 +426,18 @@ pub trait AiFunctionality {
 impl AiFunctionality for Client {
     async fn run_agent_loop(
         &self,
-        ai_client: &crate::agent::openai_client::OpenAIClient,
+        ai_client: &OpenAIClient,
         prompt: &str,
         username: &str,
         tools: ToolMap<'_>,
     ) {
-        let bot = self;
-        let message = prompt;
-        let system_promt = ChatCompletionMessageParam {
-            content: SYSTEM_PROMPT.into(),
-            role: crate::agent::openai_client::AIChatRole::System,
-        };
-        let should_stop_agent_loop = Arc::new(Mutex::new(false));
-        let tools_map = tools.register_tool(StopAgentLoop::new(
-            should_stop_agent_loop.clone(),
-            username,
-            bot,
-        ));
-
-        let mut messages = Vec::new();
-        messages.push(system_promt);
-        let user_message = ChatCompletionMessageParam {
-            content: message.to_string(),
-            role: crate::agent::openai_client::AIChatRole::User,
-        };
-        messages.push(user_message);
-
-        while !*should_stop_agent_loop.lock().await {
-            if messages
-                .iter()
-                .any(|m| m.content.contains("/stopagentloop"))
-            {
-                bot.chat(format!("/msg {username} Stopping Agent Loop..."));
-                break;
-            }
-            if messages.len() > 15 {
-                let mut compaction_its = 0_usize;
-                let compacted = loop {
-                    if let Some(compacted) = ai_client.compact_history(&messages).await {
-                        break compacted;
-                    }
-                    if compaction_its > 10 {
-                        break messages
-                            .get(1)
-                            .map_or("just stop and message me you stopped".into(), |v| {
-                                v.content.clone()
-                            });
-                    }
-                    compaction_its += 1;
-                };
-                messages = vec![
-                    ChatCompletionMessageParam {
-                        content: SYSTEM_PROMPT.to_string(),
-                        role: crate::agent::openai_client::AIChatRole::System,
-                    },
-                    ChatCompletionMessageParam {
-                        content: compacted,
-                        role: crate::agent::openai_client::AIChatRole::User,
-                    },
-                ];
-            }
-            println!(
-                "[LLM] we are sending messages: \n\n{}",
-                messages.iter().fold(String::new(), |mut acc, v| {
-                    _ = writeln!(&mut acc, "{v}");
-                    acc
-                })
-            );
-            let comp = ai_client.get_completion(&messages, &tools_map).await;
-            let Ok(completion) = comp else {
-                bot.chat(format!(
-                    "/msg {username}, No Completion Found, Stopping Agent Loop..."
-                ));
-                println!("breaking agentic loop because there was no completion");
-                break;
-            };
-            let Some(first) = completion.choices.first() else {
-                bot.chat(format!(
-                    "/msg {username}, No Completion Found, Stopping Agent Loop..."
-                ));
-                println!("breaking agentic loop because there was no first completion");
-                break;
-            };
-            let tool_calls = &first.message.tool_calls;
-            let agent_response_content = first.message.content.clone().unwrap_or_default();
-            if agent_response_content.is_empty() {
-                messages.push(ChatCompletionMessageParam {
-                    content: String::from("Nothing to say..."),
-                    role: crate::agent::openai_client::AIChatRole::Assistant,
-                });
-            } else {
-                messages.push(ChatCompletionMessageParam {
-                    content: agent_response_content,
-                    role: crate::agent::openai_client::AIChatRole::Assistant,
-                });
-            }
-
-            for tool_call in tool_calls {
-                if let Some(tool) = tools_map.get(&tool_call.function.name) {
-                    let answer = tool
-                        .invoke(
-                            &serde_json::from_str(&tool_call.function.arguments)
-                                .unwrap_or_default(),
-                        )
-                        .await;
-                    tokio::time::sleep(tool.get_timeout_wait()).await;
-
-                    messages.push(ChatCompletionMessageParam {
-                        content: answer,
-                        role: crate::agent::openai_client::AIChatRole::Tool,
-                    });
-                } else {
-                    let answer = format!("{} tool does not exist", &tool_call.function.name);
-                    messages.push(ChatCompletionMessageParam {
-                        content: answer,
-                        role: crate::agent::openai_client::AIChatRole::Tool,
-                    });
-                }
-            }
-        }
+        _ = ai_client
+            .run_agent(SYSTEM_PROMPT, prompt, &tools)
+            .await
+            .map_err(|e| {
+                self.chat(format!("/msg {username} failed to run agent loop..."));
+                println!("{e:#?}");
+            });
     }
 }
 

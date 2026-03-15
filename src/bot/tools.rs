@@ -5,6 +5,7 @@ use azalea::{
     pathfinder::{PathfinderOpts, goals::BlockPosGoal},
     prelude::PathfinderClientExt,
 };
+use openai_client::{ToolCallArgDescriptor, ToolCallArgType, ToolCallFn, ToolMap};
 use std::{fmt::Write, pin::Pin, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, time::Instant};
 
@@ -18,11 +19,68 @@ pub trait IntoPinBoxString<'a>: Sized + Send + ToString + 'a {
 
 impl<'a, T: Sized + Send + ToString + 'a> IntoPinBoxString<'a> for T {}
 
-use crate::{
-    ENV_VARS, IsSpamMessage__PiperizeTrait, State,
-    agent::tool::{ToolCallArgDescriptor, ToolCallFn},
-    buffer::ChatFifoOps,
-};
+use crate::{ENV_VARS, IsSpamMessage__PiperizeTrait, State, buffer::ChatFifoOps};
+
+const SUBAGENT_PROMPT: &str = include_str!("./SUBAGENT.md");
+pub struct SpawnSubAgent<'a> {
+    subagent_tools: Arc<ToolMap<'a>>,
+}
+
+impl<'a> SpawnSubAgent<'a> {
+    pub fn new(subagent_tools: Arc<ToolMap<'a>>) -> Self {
+        Self { subagent_tools }
+    }
+}
+
+impl ToolCallFn for SpawnSubAgent<'_> {
+    fn get_name(&self) -> &'static str {
+        "spawn_sub_agent"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "spawn an AI that can control the bot and interact with the outside world"
+    }
+
+    fn invoke<'b>(
+        &'b self,
+        args: &serde_json::Value,
+    ) -> Pin<Box<dyn Future<Output = String> + Send + 'b>> {
+        let Some(serde_json::Value::String(task)) = args.get("task") else {
+            return "Please provide a task".into_pin_box_string();
+        };
+        println!("Summoned Subagent with task: {task}");
+
+        let task = task.clone();
+        let tools = self.subagent_tools.clone();
+        let agent_loop = async move {
+            let Some(client) = &ENV_VARS.openai_client else {
+                return "for some reason agent is not available right now".into();
+            };
+            // let available_tools_msg = tools.values().fold(String::new(), |mut acc, v| {
+            //     _ = writeln!(&mut acc, "{}: {}", v.get_name(), v.get_description());
+            //     acc
+            // });
+            client
+                .run_agent(SUBAGENT_PROMPT, task, &tools)
+                .await
+                .unwrap_or(String::from("Subagent Run Failed"))
+        };
+        Box::pin(agent_loop)
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+        vec![ToolCallArgDescriptor::new(
+            true,
+            "task",
+            ToolCallArgType::String,
+            "the task that the agent should fulfill before stopping.",
+        )]
+    }
+
+    fn get_timeout_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(0)
+    }
+}
 
 pub struct SendChatMessage<'a, 'b>(&'a Client, &'b State);
 
@@ -41,11 +99,11 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
         "send a message to global chat as the bot"
     }
 
-    fn get_args(&self) -> Vec<crate::agent::tool::ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::new(
             true,
             "message",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the message to send to global chat, cannot be more than 100 characters",
         )]
     }
@@ -85,15 +143,15 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
     }
 }
 
-pub struct RespondToUser<'a, 'b, 'c>(&'a Client, &'b str, &'c State);
+pub struct RespondToUser(Arc<Client>, String, Arc<State>);
 
-impl<'a, 'b, 'c> RespondToUser<'a, 'b, 'c> {
-    pub fn new(client: &'a Client, user: &'b str, state: &'c State) -> Self {
-        Self(client, user, state)
+impl RespondToUser {
+    pub fn new(client: Arc<Client>, username: String, state: Arc<State>) -> Self {
+        Self(client, username, state)
     }
 }
 
-impl ToolCallFn for RespondToUser<'_, '_, '_> {
+impl ToolCallFn for RespondToUser {
     fn get_name(&self) -> &'static str {
         "respond_to_user"
     }
@@ -106,7 +164,7 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "message",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the message to send to the user",
         )]
     }
@@ -123,7 +181,7 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
                 .into_pin_box_string();
         }
         let mut response = String::new();
-        let username = self.1.to_string();
+        let username = self.1.clone();
         let past_messages = self.2.messages.clone();
         self.0.chat(format!("/msg {username} {message}"));
         Box::pin(async move {
@@ -200,13 +258,13 @@ impl ToolCallFn for ReadChatHistory<'_> {
             ToolCallArgDescriptor::new(
                 false,
                 "count",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "how many past messages to load",
             ),
             ToolCallArgDescriptor::new(
                 false,
                 "verbose",
-                crate::agent::tool::ToolCallArgType::Bool,
+                ToolCallArgType::Bool,
                 "whether to also show server announcements and join messages",
             ),
         ]
@@ -295,7 +353,7 @@ impl ToolCallFn for Sleep<'_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "time",
-            crate::agent::tool::ToolCallArgType::Number,
+            ToolCallArgType::Number,
             "time to sleep in seconds as an unsigned integer",
         )]
     }
@@ -353,7 +411,7 @@ impl ToolCallFn for JoinParty<'_, '_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "username",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the name of the user whose party you want to join",
         )]
     }
@@ -413,7 +471,7 @@ impl ToolCallFn for InviteParty<'_, '_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "username",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the name of the user who you want to invite to a party",
         )]
     }
@@ -485,28 +543,28 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
             ToolCallArgDescriptor::new(
                 true,
                 "username",
-                crate::agent::tool::ToolCallArgType::String,
+                ToolCallArgType::String,
                 "the user to send the direct message to",
             ),
             ToolCallArgDescriptor::new(
                 true,
                 "message",
-                crate::agent::tool::ToolCallArgType::String,
+                ToolCallArgType::String,
                 "the message to send to the user, cannot be longer than 100 characters",
             ),
         ]
     }
 }
 
-pub struct StopAgentLoop<'a, 'b>(Arc<Mutex<bool>>, &'a str, &'b Client);
+pub struct StopAgentLoop<'a>(Arc<Mutex<bool>>, String, &'a Client);
 
-impl<'a, 'b> StopAgentLoop<'a, 'b> {
-    pub fn new(mutex: Arc<Mutex<bool>>, username: &'a str, client: &'b Client) -> Self {
+impl<'a> StopAgentLoop<'a> {
+    pub fn new(mutex: Arc<Mutex<bool>>, username: String, client: &'a Client) -> Self {
         Self(mutex, username, client)
     }
 }
 
-impl ToolCallFn for StopAgentLoop<'_, '_> {
+impl ToolCallFn for StopAgentLoop<'_> {
     fn get_name(&self) -> &'static str {
         "stop_agent_loop"
     }
@@ -517,7 +575,7 @@ impl ToolCallFn for StopAgentLoop<'_, '_> {
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
         let should_stop = self.0.clone();
-        let username = self.1;
+        let username = self.1.clone();
         self.2
             .chat(format!("/msg {username} Stopping Agent Loop..."));
         Box::pin(async move {
@@ -623,7 +681,7 @@ impl ToolCallFn for SelectHotbarSlot<'_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "index",
-            crate::agent::tool::ToolCallArgType::Number,
+            ToolCallArgType::Number,
             "the hotbar index to select as current main hand item",
         )]
     }
@@ -684,7 +742,7 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "message",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the message to send to party chat, max 100 characters",
         )]
     }
@@ -940,7 +998,7 @@ impl ToolCallFn for AddFriend<'_, '_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "username",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the username of the player to add as friend",
         )]
     }
@@ -995,7 +1053,7 @@ impl ToolCallFn for RemoveFriend<'_, '_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "username",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the username of the player to remove from friends",
         )]
     }
@@ -1183,7 +1241,7 @@ impl ToolCallFn for GetStats<'_, '_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "username",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the username of the player whose stats to get",
         )]
     }
@@ -1294,25 +1352,25 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
             ToolCallArgDescriptor::new(
                 false,
                 "z_radius",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "the maximum z radius a block can have from you to be read, defaults to 3",
             ),
             ToolCallArgDescriptor::new(
                 false,
                 "x_radius",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "the maximum x radius a block can have from you to be read, defaults to 5",
             ),
             ToolCallArgDescriptor::new(
                 false,
                 "y_radius",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "the maximum y radius a block can have from you to be read, defaults to 5",
             ),
             ToolCallArgDescriptor::new(
                 false,
                 "block_type",
-                crate::agent::tool::ToolCallArgType::String,
+                ToolCallArgType::String,
                 "block type in lower snake case. if none is provided will show all blocks in the radius (excluding air). example: oak_log",
             ),
         ]
@@ -1431,25 +1489,25 @@ impl ToolCallFn for PathFind<'_> {
             ToolCallArgDescriptor::new(
                 true,
                 "x",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "the x coordinate of the position to pathfind to as signed integer",
             ),
             ToolCallArgDescriptor::new(
                 true,
                 "y",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "the y coordinate of the position to pathfind to as signed integer",
             ),
             ToolCallArgDescriptor::new(
                 true,
                 "z",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "the z coordinate of the position to pathfind to as signed integer",
             ),
             ToolCallArgDescriptor::new(
                 true,
                 "time_to_reach_goal",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "The estimated time in seconds it should take you to reach that goal.",
             ),
         ]
@@ -1558,19 +1616,19 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
             ToolCallArgDescriptor::new(
                 false,
                 "z_radius",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "the maximum z radius a block can have from you to be read, defaults to 3",
             ),
             ToolCallArgDescriptor::new(
                 false,
                 "x_radius",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "the maximum x radius a block can have from you to be read, defaults to 5",
             ),
             ToolCallArgDescriptor::new(
                 false,
                 "y_radius",
-                crate::agent::tool::ToolCallArgType::Number,
+                ToolCallArgType::Number,
                 "the maximum y radius a block can have from you to be read, defaults to 5",
             ),
         ]
@@ -1610,7 +1668,7 @@ impl ToolCallFn for DeclineFriendRequest<'_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "username",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the username whose friend request should be declined",
         )]
     }
@@ -1645,7 +1703,7 @@ impl ToolCallFn for AcceptFriendRequest<'_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "username",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "the username whose friend request should be accepted",
         )]
     }
@@ -1702,13 +1760,13 @@ impl ToolCallFn for RunCommand<'_, '_> {
             ToolCallArgDescriptor::new(
                 true,
                 "command",
-                crate::agent::tool::ToolCallArgType::String,
+                ToolCallArgType::String,
                 "the command category to run",
             ),
             ToolCallArgDescriptor::new(
                 false,
                 "args",
-                crate::agent::tool::ToolCallArgType::String,
+                ToolCallArgType::String,
                 "the arguments to provide for additional configuration of the main command",
             ),
         ]
@@ -1783,7 +1841,7 @@ impl ToolCallFn for QuickCommand<'_, '_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "command",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "quickcommand, choice of one of these choices:
 
 spawn: teleport to the lobby spawn location
@@ -1842,7 +1900,7 @@ impl ToolCallFn for JoinGame<'_, '_> {
         vec![ToolCallArgDescriptor::new(
             true,
             "username",
-            crate::agent::tool::ToolCallArgType::String,
+            ToolCallArgType::String,
             "whose private game to join",
         )]
     }
