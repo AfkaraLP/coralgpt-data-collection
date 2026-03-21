@@ -20,8 +20,8 @@ use crate::bot::tools::{
     AcceptFriendRequest, AddFriend, DeclineFriendRequest, GetCurrentPosition, GetInventory,
     GetNearbyBlocks, GetPartyInfo, GetStats, InviteParty, JoinGame, JoinParty, LeaveParty,
     NearbyBlockKinds, PathFind, QuickCommand, ReadChatHistory, ReadTabList, RemoveFriend,
-    RespondToUser, RunCommand, SelectHotbarSlot, SendChatMessage, SendDirectMessage,
-    SendPartyMessage, Sleep, SpawnSubAgent,
+    RespondToUser, RunCommand, SelectHotbarSlot, SendDirectMessage, SendPartyMessage, Sleep,
+    SpawnSubAgent,
 };
 use crate::{State, message::Message, server::WsServerMessage};
 use openai_client::ToolMap;
@@ -132,7 +132,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
             bot.handle_message_event(message, &state).await;
         }
         Event::Tick => {
-            Arc::new(bot).handle_instruction(Arc::new(state)).await;
+            bot.handle_instruction(&state).await;
         }
         _ => {}
     }
@@ -149,54 +149,55 @@ pub fn is_dm_message<S: AsRef<str>>(msg: S) -> bool {
 }
 
 #[piperize]
-async fn handle_agent_instruction(bot: Arc<Client>, state: Arc<State>, prompt: &str) {
+async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str) {
     if let Some(ai_client) = &ENV_VARS.openai_client {
         let username = &ENV_VARS.username;
+        let subagent_tools = ToolMap::new()
+            .register_tool(RespondToUser::new(bot, username, state))
+            .register_tool(Sleep::new(state))
+            .register_tool(SendDirectMessage::new(bot, state))
+            // .register_tool(SendChatMessage::new(bot, state))
+            .register_tool(QuickCommand::new(bot, state))
+            .register_tool(RunCommand::new(bot, state))
+            .register_tool(NearbyBlockKinds::new(bot))
+            .register_tool(PathFind::new(bot))
+            .register_tool(GetCurrentPosition::new(bot))
+            .register_tool(GetStats::new(bot, state))
+            .register_tool(ReadChatHistory::new(state))
+            .register_tool(ReadTabList::new(bot))
+            .register_tool(AcceptFriendRequest::new(bot))
+            .register_tool(DeclineFriendRequest::new(bot))
+            .register_tool(GetInventory::new(bot))
+            .register_tool(SelectHotbarSlot::new(bot))
+            .register_tool(JoinParty::new(bot, state))
+            .register_tool(JoinGame::new(bot, state))
+            .register_tool(InviteParty::new(bot, state))
+            .register_tool(SendPartyMessage::new(bot, state))
+            .register_tool(LeaveParty::new(bot, state))
+            .register_tool(GetPartyInfo::new(bot, state))
+            .register_tool(AddFriend::new(bot, state))
+            .register_tool(GetNearbyBlocks::new(bot))
+            .register_tool(RemoveFriend::new(bot, state));
+        let subagent_tools = Arc::new(subagent_tools);
         let tools_map = ToolMap::new()
-            .register_tool(RespondToUser::new(
-                bot.clone(),
-                username.clone(),
-                state.clone(),
-            ))
-            .register_tool(SpawnSubAgent::new(Arc::new(
-                ToolMap::new()
-                    .register_tool(RespondToUser::new(
-                        bot.clone(),
-                        username.clone(),
-                        state.clone(),
-                    ))
-                    .register_tool(Sleep::new(&state))
-                    .register_tool(SendDirectMessage::new(&bot, &state))
-                    // .register_tool(SendChatMessage::new(&bot, &state))
-                    .register_tool(QuickCommand::new(&bot, &state))
-                    .register_tool(RunCommand::new(&bot, &state))
-                    .register_tool(NearbyBlockKinds::new(&bot))
-                    .register_tool(PathFind::new(&bot))
-                    .register_tool(GetCurrentPosition::new(&bot))
-                    .register_tool(GetStats::new(&bot, &state))
-                    .register_tool(ReadChatHistory::new(&state))
-                    .register_tool(ReadTabList::new(&bot))
-                    .register_tool(AcceptFriendRequest::new(&bot))
-                    .register_tool(DeclineFriendRequest::new(&bot))
-                    .register_tool(GetInventory::new(&bot))
-                    .register_tool(SelectHotbarSlot::new(&bot))
-                    .register_tool(JoinParty::new(&bot, &state))
-                    .register_tool(JoinGame::new(&bot, &state))
-                    .register_tool(InviteParty::new(&bot, &state))
-                    .register_tool(SendPartyMessage::new(&bot, &state))
-                    .register_tool(LeaveParty::new(&bot, &state))
-                    .register_tool(GetPartyInfo::new(&bot, &state))
-                    .register_tool(AddFriend::new(&bot, &state))
-                    .register_tool(GetNearbyBlocks::new(&bot))
-                    .register_tool(RemoveFriend::new(&bot, &state)),
-            )));
-        bot.run_agent_loop(ai_client, prompt, username, tools_map)
+            .register_tool(RespondToUser::new(bot, username, state))
+            .register_tool(SpawnSubAgent::new(&subagent_tools));
+        let mut system_prompt = format!("{SYSTEM_PROMPT}\n\n## Available tools for the Agent:\n\n");
+        for tool in subagent_tools.values() {
+            _ = writeln!(
+                &mut system_prompt,
+                "{}: {}",
+                tool.get_name(),
+                tool.get_description()
+            );
+        }
+        bot.run_agent_loop(ai_client, &system_prompt, prompt, username, tools_map)
             .await;
     }
 }
 
 #[piperize]
-async fn handle_instruction(bot: Arc<Client>, state: Arc<State>) {
+async fn handle_instruction(bot: &Client, state: &State) {
     let mut guard = state.recv_instruction.lock().await;
     if let Some(recv) = guard.as_mut()
         && let Some(instruction) = recv.recv().await
@@ -212,7 +213,7 @@ async fn handle_instruction(bot: Arc<Client>, state: Arc<State>) {
                 let _ = sender.send(bot.selected_hotbar_slot()).await;
             }
             Instruction::Agent(prompt) => {
-                bot.handle_agent_instruction(state.clone(), &prompt).await;
+                bot.handle_agent_instruction(state, &prompt).await;
             }
         }
     }
@@ -317,48 +318,42 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
     if let Some(ai_client) = &ENV_VARS.openai_client
         && message.starts_with("/agent")
     {
-        let bot = Arc::new(bot.clone());
-        let state = Arc::new(state.clone());
+        let subagent_tools = ToolMap::new()
+            .register_tool(RespondToUser::new(bot, username, state))
+            .register_tool(Sleep::new(state))
+            .register_tool(SendDirectMessage::new(bot, state))
+            // .register_tool(SendChatMessage::new(bot, state))
+            .register_tool(QuickCommand::new(bot, state))
+            .register_tool(RunCommand::new(bot, state))
+            .register_tool(NearbyBlockKinds::new(bot))
+            .register_tool(PathFind::new(bot))
+            .register_tool(GetCurrentPosition::new(bot))
+            .register_tool(GetStats::new(bot, state))
+            .register_tool(ReadChatHistory::new(state))
+            .register_tool(ReadTabList::new(bot))
+            .register_tool(AcceptFriendRequest::new(bot))
+            .register_tool(DeclineFriendRequest::new(bot))
+            .register_tool(GetInventory::new(bot))
+            .register_tool(SelectHotbarSlot::new(bot))
+            .register_tool(JoinParty::new(bot, state))
+            .register_tool(JoinGame::new(bot, state))
+            .register_tool(InviteParty::new(bot, state))
+            .register_tool(SendPartyMessage::new(bot, state))
+            .register_tool(LeaveParty::new(bot, state))
+            .register_tool(GetPartyInfo::new(bot, state))
+            .register_tool(AddFriend::new(bot, state))
+            .register_tool(GetNearbyBlocks::new(bot))
+            .register_tool(RemoveFriend::new(bot, state));
         let tools_map = ToolMap::new()
-            .register_tool(RespondToUser::new(
-                bot.clone(),
-                username.to_string(),
-                state.clone(),
-            ))
-            .register_tool(SpawnSubAgent::new(Arc::new(
-                ToolMap::new()
-                    .register_tool(RespondToUser::new(
-                        bot.clone(),
-                        username.to_string(),
-                        state.clone(),
-                    ))
-                    .register_tool(Sleep::new(&state))
-                    .register_tool(SendDirectMessage::new(&bot, &state))
-                    // .register_tool(SendChatMessage::new(&bot, &state))
-                    .register_tool(QuickCommand::new(&bot, &state))
-                    .register_tool(RunCommand::new(&bot, &state))
-                    .register_tool(NearbyBlockKinds::new(&bot))
-                    .register_tool(PathFind::new(&bot))
-                    .register_tool(GetCurrentPosition::new(&bot))
-                    .register_tool(GetStats::new(&bot, &state))
-                    .register_tool(ReadChatHistory::new(&state))
-                    .register_tool(ReadTabList::new(&bot))
-                    .register_tool(AcceptFriendRequest::new(&bot))
-                    .register_tool(DeclineFriendRequest::new(&bot))
-                    .register_tool(GetInventory::new(&bot))
-                    .register_tool(SelectHotbarSlot::new(&bot))
-                    .register_tool(JoinParty::new(&bot, &state))
-                    .register_tool(JoinGame::new(&bot, &state))
-                    .register_tool(InviteParty::new(&bot, &state))
-                    .register_tool(SendPartyMessage::new(&bot, &state))
-                    .register_tool(LeaveParty::new(&bot, &state))
-                    .register_tool(GetPartyInfo::new(&bot, &state))
-                    .register_tool(AddFriend::new(&bot, &state))
-                    .register_tool(GetNearbyBlocks::new(&bot))
-                    .register_tool(RemoveFriend::new(&bot, &state)),
-            )));
+            .register_tool(RespondToUser::new(bot, username, state))
+            .register_tool(SpawnSubAgent::new(&subagent_tools));
+        let mut system_prompt = format!("{SYSTEM_PROMPT}\n\n## Available Subagent tools:\n\n");
+        for tool in subagent_tools.values() {
+            _ = writeln!(&mut system_prompt, "{}", tool.get_name());
+        }
         bot.run_agent_loop(
             ai_client,
+            &system_prompt,
             message.strip_prefix("/agent").unwrap_or(message),
             username,
             tools_map,
@@ -416,6 +411,7 @@ pub trait AiFunctionality {
     async fn run_agent_loop(
         &self,
         ai_client: &OpenAIClient,
+        system_prompt: &str,
         prompt: &str,
         username: &str,
         tools_map: ToolMap<'_>,
@@ -427,17 +423,23 @@ impl AiFunctionality for Client {
     async fn run_agent_loop(
         &self,
         ai_client: &OpenAIClient,
+        system_prompt: &str,
         prompt: &str,
         username: &str,
         tools: ToolMap<'_>,
     ) {
-        _ = ai_client
-            .run_agent(SYSTEM_PROMPT, prompt, &tools)
+        println!("running agent loop");
+        let res = ai_client
+            .run_agent(system_prompt, prompt, &tools)
             .await
             .map_err(|e| {
                 self.chat(format!("/msg {username} failed to run agent loop..."));
                 println!("{e:#?}");
             });
+        if let Ok(res) = res {
+            eprintln!("agent loop final response: {res}");
+        }
+        self.chat(format!("/msg {username} finished agent loop..."));
     }
 }
 

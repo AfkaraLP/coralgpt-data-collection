@@ -6,7 +6,7 @@ use azalea::{
     prelude::PathfinderClientExt,
 };
 use openai_client::{ToolCallArgDescriptor, ToolCallArgType, ToolCallFn, ToolMap};
-use std::{fmt::Write, pin::Pin, sync::Arc, time::Duration};
+use std::{fmt::Write, pin::Pin, time::Duration};
 use tokio::{sync::Mutex, time::Instant};
 
 const ONE_POINT_EIGHT_MIN_Y: i32 = 0;
@@ -23,11 +23,11 @@ use crate::{ENV_VARS, IsSpamMessage__PiperizeTrait, State, buffer::ChatFifoOps};
 
 const SUBAGENT_PROMPT: &str = include_str!("./SUBAGENT.md");
 pub struct SpawnSubAgent<'a> {
-    subagent_tools: Arc<ToolMap<'a>>,
+    subagent_tools: &'a ToolMap<'a>,
 }
 
 impl<'a> SpawnSubAgent<'a> {
-    pub fn new(subagent_tools: Arc<ToolMap<'a>>) -> Self {
+    pub fn new(subagent_tools: &'a ToolMap<'a>) -> Self {
         Self { subagent_tools }
     }
 }
@@ -51,19 +51,16 @@ impl ToolCallFn for SpawnSubAgent<'_> {
         println!("Summoned Subagent with task: {task}");
 
         let task = task.clone();
-        let tools = self.subagent_tools.clone();
         let agent_loop = async move {
             let Some(client) = &ENV_VARS.openai_client else {
                 return "for some reason agent is not available right now".into();
             };
-            // let available_tools_msg = tools.values().fold(String::new(), |mut acc, v| {
-            //     _ = writeln!(&mut acc, "{}: {}", v.get_name(), v.get_description());
-            //     acc
-            // });
-            client
-                .run_agent(SUBAGENT_PROMPT, task, &tools)
+            let subagent_response = client
+                .run_agent(SUBAGENT_PROMPT, task, self.subagent_tools)
                 .await
-                .unwrap_or(String::from("Subagent Run Failed"))
+                .unwrap_or(String::from("Subagent Run Failed"));
+            eprintln!("subagent summary: {subagent_response}");
+            subagent_response
         };
         Box::pin(agent_loop)
     }
@@ -143,15 +140,15 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
     }
 }
 
-pub struct RespondToUser(Arc<Client>, String, Arc<State>);
+pub struct RespondToUser<'a, 'b, 'c>(&'a Client, &'b str, &'c State);
 
-impl RespondToUser {
-    pub fn new(client: Arc<Client>, username: String, state: Arc<State>) -> Self {
+impl<'a, 'b, 'c> RespondToUser<'a, 'b, 'c> {
+    pub fn new(client: &'a Client, username: &'b str, state: &'c State) -> Self {
         Self(client, username, state)
     }
 }
 
-impl ToolCallFn for RespondToUser {
+impl ToolCallFn for RespondToUser<'_, '_, '_> {
     fn get_name(&self) -> &'static str {
         "respond_to_user"
     }
@@ -181,7 +178,7 @@ impl ToolCallFn for RespondToUser {
                 .into_pin_box_string();
         }
         let mut response = String::new();
-        let username = self.1.clone();
+        let username = self.1;
         let past_messages = self.2.messages.clone();
         self.0.chat(format!("/msg {username} {message}"));
         Box::pin(async move {
@@ -556,10 +553,10 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
     }
 }
 
-pub struct StopAgentLoop<'a>(Arc<Mutex<bool>>, String, &'a Client);
+pub struct StopAgentLoop<'a>(std::sync::Arc<Mutex<bool>>, String, &'a Client);
 
 impl<'a> StopAgentLoop<'a> {
-    pub fn new(mutex: Arc<Mutex<bool>>, username: String, client: &'a Client) -> Self {
+    pub fn new(mutex: std::sync::Arc<Mutex<bool>>, username: String, client: &'a Client) -> Self {
         Self(mutex, username, client)
     }
 }
