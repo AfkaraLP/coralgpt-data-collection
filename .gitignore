@@ -3,3 +3,5 @@
 chat.log
 .env
 *.db
+flamegraph.svg
+perf.data

@@ -65,6 +65,7 @@
               cargo-edit
               cargo-watch
               rust-analyzer
+              cargo-flamegraph
               gcc
               sqlite
             ];
