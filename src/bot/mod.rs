@@ -263,6 +263,9 @@ async fn join_bedwars_lobby(bot: &Client) {
     }
 }
 
+static DM_PARSE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(Da (\w+)\) (.*)").unwrap());
+
 #[piperize]
 async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, state: &State) {
     println!("{}", message.message().to_ansi());
@@ -275,21 +278,19 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         broadcaster.send(WsServerMessage::NewMessage(message.message().to_html()));
     }
     let message = message.message().to_string();
-    if message.as_str().is_dm_message() {
-        let re = Regex::new(r"\(Da (\w+)\) (.*)");
-        if let Ok(re) = re
-            && let Some(captures) = re.captures(&message)
-            && let Some(username) = captures.get(1)
-            && let Some(message) = &captures.get(2)
-            && ["Afkara", "NickAc", "8hi"].contains(&username.as_str())
-        {
-            message
-                .as_str()
-                .trim()
-                .handle_admin_dm(username.as_str(), bot, state)
-                .await;
-        }
+    if message.as_str().is_dm_message()
+        && let Some(captures) = DM_PARSE_REGEX.captures(&message)
+        && let Some(username) = captures.get(1)
+        && let Some(message) = &captures.get(2)
+        && ["Afkara", "NickAc", "8hi"].contains(&username.as_str())
+    {
+        message
+            .as_str()
+            .trim()
+            .handle_admin_dm(username.as_str(), bot, state)
+            .await;
     }
+
     if message.contains("Roby98 è entrato nella lobby.") {
         notify_roby_join().await;
     }
@@ -365,10 +366,10 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
     }
 }
 
+static WEBHOOK_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 async fn notify_roby_join() {
-    let client = reqwest::Client::new();
     let body = r##"{"content": "# 📡 **ENTRY DETECTED** <@&1151557434494681139>\n\n### 👤 **User:** `Roby98`\n\n### 🟢 **Status:** `CONNECTED`\n\n> **Note:** The target user **Roby98** has just joined the server!!!"}"##;
-    if let Err(e) = client.post("REDACTED").body(body).header("Content-Type", "application/json").send().await {
+    if let Err(e) = WEBHOOK_CLIENT.post("REDACTED").body(body).header("Content-Type", "application/json").send().await {
         eprintln!("failed sending webhook: {e:#?}");
     }
 }
