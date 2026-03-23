@@ -7,7 +7,10 @@ use azalea::{
 };
 use openai_client::{ToolCallArgDescriptor, ToolCallArgType, ToolCallFn, ToolMap};
 use std::{fmt::Write, pin::Pin, time::Duration};
-use tokio::{sync::Mutex, time::Instant};
+use tokio::{
+    sync::Mutex,
+    time::{Instant, sleep},
+};
 
 const ONE_POINT_EIGHT_MIN_Y: i32 = 0;
 
@@ -66,16 +69,14 @@ impl ToolCallFn for SpawnSubAgent<'_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "task",
-            ToolCallArgType::String,
             "the task that the agent should fulfill before stopping.",
         )]
     }
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(0)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(0)
     }
 }
 
@@ -97,10 +98,8 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "message",
-            ToolCallArgType::String,
             "the message to send to global chat, cannot be more than 100 characters",
         )]
     }
@@ -120,7 +119,7 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
         let past_messages = self.1.messages.clone();
         self.0.chat(message);
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages
                 .lock()
                 .await
@@ -135,8 +134,8 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
         })
     }
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(15000)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(15000)
     }
 }
 
@@ -158,10 +157,8 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "message",
-            ToolCallArgType::String,
             "the message to send to the user",
         )]
     }
@@ -182,7 +179,7 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
         let past_messages = self.2.messages.clone();
         self.0.chat(format!("/msg {username} {message}"));
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages
                 .lock()
                 .await
@@ -252,23 +249,16 @@ impl ToolCallFn for ReadChatHistory<'_> {
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![
-            ToolCallArgDescriptor::new(
-                false,
-                "count",
-                ToolCallArgType::Number,
-                "how many past messages to load",
-            ),
-            ToolCallArgDescriptor::new(
-                false,
+            ToolCallArgDescriptor::number("count", "how many past messages to load"),
+            ToolCallArgDescriptor::bool(
                 "verbose",
-                ToolCallArgType::Bool,
                 "whether to also show server announcements and join messages",
             ),
         ]
     }
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(0)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(0)
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -321,7 +311,7 @@ impl ToolCallFn for Sleep<'_> {
                 if let Some(num) = num.as_u64() {
                     let message_state = self.0.messages.clone();
                     Box::pin(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(num)).await;
+                        sleep(Duration::from_secs(num)).await;
                         let past_messages_count: usize =
                             num.try_into().unwrap_or(25_usize).div_ceil(5);
 
@@ -347,16 +337,14 @@ impl ToolCallFn for Sleep<'_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::number(
             "time",
-            ToolCallArgType::Number,
             "time to sleep in seconds as an unsigned integer",
         )]
     }
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(0)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(0)
     }
 }
 
@@ -384,7 +372,7 @@ impl ToolCallFn for JoinParty<'_, '_> {
         self.0.chat(format!("/p join {username}"));
         let past_messages = self.1.messages.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages
                 .lock()
                 .await
@@ -405,10 +393,8 @@ impl ToolCallFn for JoinParty<'_, '_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "username",
-            ToolCallArgType::String,
             "the name of the user whose party you want to join",
         )]
     }
@@ -438,7 +424,7 @@ impl ToolCallFn for InviteParty<'_, '_> {
         let past_messages = self.1.messages.clone();
         let username = username.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages
                 .lock()
                 .await
@@ -465,10 +451,8 @@ impl ToolCallFn for InviteParty<'_, '_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "username",
-            ToolCallArgType::String,
             "the name of the user who you want to invite to a party",
         )]
     }
@@ -506,7 +490,7 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
         let username = username.clone();
         self.0.chat(format!("/msg {username} {message}"));
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
 
             let messages: Vec<String> = message_state
                 .lock()
@@ -537,16 +521,9 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![
-            ToolCallArgDescriptor::new(
-                true,
-                "username",
-                ToolCallArgType::String,
-                "the user to send the direct message to",
-            ),
-            ToolCallArgDescriptor::new(
-                true,
+            ToolCallArgDescriptor::string("username", "the user to send the direct message to"),
+            ToolCallArgDescriptor::string(
                 "message",
-                ToolCallArgType::String,
                 "the message to send to the user, cannot be longer than 100 characters",
             ),
         ]
@@ -586,8 +563,8 @@ impl ToolCallFn for StopAgentLoop<'_> {
         Vec::new()
     }
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(0)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(0)
     }
 }
 
@@ -639,8 +616,8 @@ impl ToolCallFn for GetInventory<'_> {
         Vec::new()
     }
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(0)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(0)
     }
 }
 
@@ -675,16 +652,14 @@ impl ToolCallFn for SelectHotbarSlot<'_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::number(
             "index",
-            ToolCallArgType::Number,
             "the hotbar index to select as current main hand item",
         )]
     }
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(0)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(0)
     }
 }
 
@@ -717,7 +692,7 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
         let mut response = String::new();
         self.0.chat(format!("/pc {message}"));
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let chat_history = past_messages
                 .lock()
                 .await
@@ -736,16 +711,14 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "message",
-            ToolCallArgType::String,
             "the message to send to party chat, max 100 characters",
         )]
     }
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(1000)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(1000)
     }
 }
 
@@ -770,7 +743,7 @@ impl ToolCallFn for LeaveParty<'_, '_> {
         self.0.chat("/p leave");
         let past_messages = self.1.messages.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages
                 .lock()
                 .await
@@ -912,7 +885,7 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
         self.0.chat("/p info");
         let message_queue = self.1.messages.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let mut p_info: Option<PartyInfo> = None;
             let past_messages = message_queue
                 .lock()
@@ -969,7 +942,7 @@ impl ToolCallFn for AddFriend<'_, '_> {
         self.0.chat(format!("/f add {username}"));
         let past_messages = self.1.messages.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages
                 .lock()
                 .await
@@ -992,10 +965,8 @@ impl ToolCallFn for AddFriend<'_, '_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "username",
-            ToolCallArgType::String,
             "the username of the player to add as friend",
         )]
     }
@@ -1026,7 +997,7 @@ impl ToolCallFn for RemoveFriend<'_, '_> {
         let past_messages = self.1.messages.clone();
         let username = username.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages
                 .lock()
                 .await
@@ -1047,10 +1018,8 @@ impl ToolCallFn for RemoveFriend<'_, '_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "username",
-            ToolCallArgType::String,
             "the username of the player to remove from friends",
         )]
     }
@@ -1223,22 +1192,22 @@ impl ToolCallFn for GetStats<'_, '_> {
         let past_messages = self.1.messages.clone();
         let username = username.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages.lock().await;
             let past_messages = past_messages
                 .iter()
                 .filter(|v| !v.to_string().is_spam_message())
                 .take(25);
             let stats = PlayerStats::parse_from_chat(past_messages.map(ToString::to_string));
-            format!("{username}'s stats: {}", stats.player_stats_to_llm_text())
+            let stats_text = stats.player_stats_to_llm_text();
+            println!("got stats: {:#?}", stats_text);
+            format!("{username}'s stats: {}", stats_text)
         })
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "username",
-            ToolCallArgType::String,
             "the username of the player whose stats to get",
         )]
     }
@@ -1346,35 +1315,27 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![
-            ToolCallArgDescriptor::new(
-                false,
+            ToolCallArgDescriptor::number(
                 "z_radius",
-                ToolCallArgType::Number,
                 "the maximum z radius a block can have from you to be read, defaults to 3",
             ),
-            ToolCallArgDescriptor::new(
-                false,
+            ToolCallArgDescriptor::number(
                 "x_radius",
-                ToolCallArgType::Number,
                 "the maximum x radius a block can have from you to be read, defaults to 5",
             ),
-            ToolCallArgDescriptor::new(
-                false,
+            ToolCallArgDescriptor::number(
                 "y_radius",
-                ToolCallArgType::Number,
                 "the maximum y radius a block can have from you to be read, defaults to 5",
             ),
-            ToolCallArgDescriptor::new(
-                false,
+            ToolCallArgDescriptor::string(
                 "block_type",
-                ToolCallArgType::String,
                 "block type in lower snake case. if none is provided will show all blocks in the radius (excluding air). example: oak_log",
             ),
         ]
     }
 
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(0)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(0)
     }
 }
 
@@ -1433,7 +1394,7 @@ impl ToolCallFn for PathFind<'_> {
 
             if tokio::time::timeout(Duration::from_millis(1500), async {
                 while bot.is_calculating_path() {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    sleep(Duration::from_secs(1)).await;
                 }
             })
             .await
@@ -1473,7 +1434,7 @@ impl ToolCallFn for PathFind<'_> {
                     );
                 }
 
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                sleep(Duration::from_secs(1)).await;
             };
             bot.stop_pathfinding();
             goto_thread.abort();
@@ -1483,34 +1444,26 @@ impl ToolCallFn for PathFind<'_> {
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![
-            ToolCallArgDescriptor::new(
-                true,
+            ToolCallArgDescriptor::number(
                 "x",
-                ToolCallArgType::Number,
                 "the x coordinate of the position to pathfind to as signed integer",
             ),
-            ToolCallArgDescriptor::new(
-                true,
+            ToolCallArgDescriptor::number(
                 "y",
-                ToolCallArgType::Number,
                 "the y coordinate of the position to pathfind to as signed integer",
             ),
-            ToolCallArgDescriptor::new(
-                true,
+            ToolCallArgDescriptor::number(
                 "z",
-                ToolCallArgType::Number,
                 "the z coordinate of the position to pathfind to as signed integer",
             ),
-            ToolCallArgDescriptor::new(
-                true,
+            ToolCallArgDescriptor::number(
                 "time_to_reach_goal",
-                ToolCallArgType::Number,
                 "The estimated time in seconds it should take you to reach that goal.",
             ),
         ]
     }
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(0)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(0)
     }
 }
 
@@ -1610,28 +1563,22 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![
-            ToolCallArgDescriptor::new(
-                false,
+            ToolCallArgDescriptor::number(
                 "z_radius",
-                ToolCallArgType::Number,
                 "the maximum z radius a block can have from you to be read, defaults to 3",
             ),
-            ToolCallArgDescriptor::new(
-                false,
+            ToolCallArgDescriptor::number(
                 "x_radius",
-                ToolCallArgType::Number,
                 "the maximum x radius a block can have from you to be read, defaults to 5",
             ),
-            ToolCallArgDescriptor::new(
-                false,
+            ToolCallArgDescriptor::number(
                 "y_radius",
-                ToolCallArgType::Number,
                 "the maximum y radius a block can have from you to be read, defaults to 5",
             ),
         ]
     }
-    fn get_timeout_wait(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(0)
+    fn get_timeout_wait(&self) -> Duration {
+        Duration::from_millis(0)
     }
 }
 
@@ -1662,10 +1609,8 @@ impl ToolCallFn for DeclineFriendRequest<'_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "username",
-            ToolCallArgType::String,
             "the username whose friend request should be declined",
         )]
     }
@@ -1697,10 +1642,8 @@ impl ToolCallFn for AcceptFriendRequest<'_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "username",
-            ToolCallArgType::String,
             "the username whose friend request should be accepted",
         )]
     }
@@ -1734,7 +1677,7 @@ impl ToolCallFn for RunCommand<'_, '_> {
         self.0.chat(format!("/{command} {arg}"));
         let past_messages = self.1.messages.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages
                 .lock()
                 .await
@@ -1745,7 +1688,7 @@ impl ToolCallFn for RunCommand<'_, '_> {
                     acc
                 });
             if past_messages.contains("Comando sconosciuto.") {
-                "Uknown Command".into()
+                "Unknown Command".into()
             } else {
                 format!("Ran command, past chat output:\n\n{past_messages}")
             }
@@ -1754,16 +1697,9 @@ impl ToolCallFn for RunCommand<'_, '_> {
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![
-            ToolCallArgDescriptor::new(
-                true,
-                "command",
-                ToolCallArgType::String,
-                "the command category to run",
-            ),
-            ToolCallArgDescriptor::new(
-                false,
+            ToolCallArgDescriptor::string("command", "the command category to run"),
+            ToolCallArgDescriptor::string(
                 "args",
-                ToolCallArgType::String,
                 "the arguments to provide for additional configuration of the main command",
             ),
         ]
@@ -1819,7 +1755,7 @@ impl ToolCallFn for QuickCommand<'_, '_> {
         response.push_str("past messages:\n\n");
 
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_secs(1)).await;
             let past_messages = past_messages
                 .lock()
                 .await
@@ -1835,10 +1771,8 @@ impl ToolCallFn for QuickCommand<'_, '_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "command",
-            ToolCallArgType::String,
             "quickcommand, choice of one of these choices:
 
 spawn: teleport to the lobby spawn location
@@ -1894,10 +1828,8 @@ impl ToolCallFn for JoinGame<'_, '_> {
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::new(
-            true,
+        vec![ToolCallArgDescriptor::string(
             "username",
-            ToolCallArgType::String,
             "whose private game to join",
         )]
     }
