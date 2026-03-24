@@ -328,7 +328,7 @@ impl actix::Actor for WsSession {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         Self::heartbeat(ctx);
-        ctx.set_mailbox_capacity(100);
+        ctx.set_mailbox_capacity(20);
 
         let mut rx = self.broadcaster.tx.subscribe();
         let addr = ctx.address();
