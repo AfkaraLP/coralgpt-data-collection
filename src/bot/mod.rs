@@ -20,8 +20,8 @@ use crate::bot::tools::{
     AcceptFriendRequest, AddFriend, DeclineFriendRequest, GetCurrentPosition, GetInventory,
     GetNearbyBlocks, GetPartyInfo, GetStats, InviteParty, JoinGame, JoinParty, LeaveParty,
     NearbyBlockKinds, PathFind, QuickCommand, ReadChatHistory, ReadTabList, RemoveFriend,
-    RespondToUser, RunCommand, SelectHotbarSlot, SendDirectMessage, SendPartyMessage, Sleep,
-    SpawnSubAgent,
+    RespondToUser, RunCommand, SelectHotbarSlot, SendChatMessage, SendDirectMessage,
+    SendPartyMessage, Sleep, SpawnSubAgent,
 };
 use crate::{State, message::Message, server::WsServerMessage};
 use openai_client::ToolMap;
@@ -156,7 +156,7 @@ async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str) {
             .register_tool(RespondToUser::new(bot, username, state))
             .register_tool(Sleep::new(state))
             .register_tool(SendDirectMessage::new(bot, state))
-            // .register_tool(SendChatMessage::new(bot, state))
+            .register_tool(SendChatMessage::new(bot, state))
             .register_tool(QuickCommand::new(bot, state))
             .register_tool(RunCommand::new(bot, state))
             .register_tool(NearbyBlockKinds::new(bot))
@@ -323,7 +323,7 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
             .register_tool(RespondToUser::new(bot, username, state))
             .register_tool(Sleep::new(state))
             .register_tool(SendDirectMessage::new(bot, state))
-            // .register_tool(SendChatMessage::new(bot, state))
+            .register_tool(SendChatMessage::new(bot, state))
             .register_tool(QuickCommand::new(bot, state))
             .register_tool(RunCommand::new(bot, state))
             .register_tool(NearbyBlockKinds::new(bot))
