@@ -41,7 +41,7 @@ impl ToolCallFn for SpawnSubAgent<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "spawn an AI that can control the bot and interact with the outside world"
+        "Spawn a specialized AI subagent that can autonomously control the bot and perform complex multi-step tasks. The subagent has access to all the same tools as the main agent and can reason through problems that require multiple actions.\n\nUse this when:\n- You need to perform a complex task that requires planning (e.g., \"go find a specific resource and bring it back\")\n- You need to explore the world and report back findings\n- You need to complete a multi-step objective that would require many individual tool calls\n- You want the bot to make decisions based on changing conditions\n\nExample: If someone asks \"Can you go to the spawn and check if the shop is open?\", spawn a subagent with that task."
     }
 
     fn invoke<'b>(
@@ -71,7 +71,7 @@ impl ToolCallFn for SpawnSubAgent<'_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "task",
-            "the task that the agent should fulfill before stopping.",
+            "A detailed description of the task you want the subagent to complete. Be specific about what success looks like. The subagent will keep running until it completes the task or determines it cannot be done.\n\nExample: \"Go to coordinates [100, 64, 200], search for a diamond ore block within 10 blocks, and tell me what you found\"",
         )]
     }
 
@@ -94,13 +94,13 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "send a message to global chat as the bot"
+        "Send a text message to the global/public chat visible to all players in the current lobby. This is the main way to communicate with anyone in the game.\n\nUse this when:\n- Responding to public questions\n- Starting a conversation in global chat\n- Making public announcements\n- Talking to strangers\n\nNote: Messages are limited to 100 characters. The tool returns the past 8 chat messages to help you see the context of your message."
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "message",
-            "the message to send to global chat, cannot be more than 100 characters",
+            "The text message to send to global chat. Must be 100 characters or less. This appears publicly to all players in the lobby.\n\nExample: \"Hey everyone! Looking for a duo game\"",
         )]
     }
 
@@ -153,13 +153,13 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "respond to the user as bot ingame in private messages"
+        "Send a private message (DM) directly to a specific player. This is a private, one-on-one conversation that only the recipient can see.\n\nUse this when:\n- Someone messages you privately and you want to reply\n- You want to have a private conversation without others seeing\n- Responding to /msg commands from other players\n- Sending sensitive information you don't want others to see\n\nNote: Limited to 100 characters. Returns the past 5 messages to see your message in context."
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "message",
-            "the message to send to the user",
+            "The private message to send to the specific player. This goes directly to them via /msg. Max 100 characters.\n\nExample: \"Sure, I'll join your party!\"",
         )]
     }
 
@@ -209,7 +209,7 @@ impl ToolCallFn for ReadTabList<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "read what players are in the current lobby, may contain rank and guild aswell"
+        "Retrieve the list of all players currently in the same lobby/server as you. The tab list typically shows player names along with their rank, guild tag, and other metadata.\n\nUse this when:\n- Checking who is online in your lobby\n- Looking for specific players to invite to party/games\n- Seeing if friends are online\n- Checking for potential teammates or opponents\n\nNote: This only shows players in your current server/lobby, not the entire network."
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
@@ -244,15 +244,18 @@ impl ToolCallFn for ReadChatHistory<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "get the past messages from chat, do not request too many in order to not fill up context too quick"
+        "Retrieve recent messages from the chat history. This allows you to see what has been said recently, including public messages, private messages sent to you, system announcements, and join/leave messages.\n\nUse this when:\n- Reviewing recent conversations to understand context\n- Checking if someone responded to you\n- Seeing what happened while you were away\n- Finding specific information someone said earlier\n\nTip: Use the 'verbose' parameter to include spam messages like server announcements and join/leave messages. Try to request only as many messages as you need to avoid filling up context too quickly."
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![
-            ToolCallArgDescriptor::number("count", "how many past messages to load"),
+            ToolCallArgDescriptor::number(
+                "count",
+                "The number of past messages to retrieve. This determines how far back in chat history to look. Higher values give more context but use more tokens. Recommended: 5-20 for most situations.\n\nExample: 10 (get the 10 most recent messages)",
+            ),
             ToolCallArgDescriptor::bool(
                 "verbose",
-                "whether to also show server announcements and join messages",
+                "When set to true, includes all messages including server announcements, join/leave messages, and other spam. When false (default), filters out spam messages to show only meaningful player messages.\n\nExample: false to see only player chat, true to see everything",
             ),
         ]
     }
@@ -302,7 +305,7 @@ impl ToolCallFn for Sleep<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "do nothing for a set amount of time"
+        "Pause the agent's execution for a specified duration. This is useful when you need to wait for something to happen in the game, such as waiting for a party invite, waiting for a game to start, or letting chat messages appear.\n\nUse this when:\n- Waiting for a party invite to be sent/accepted\n- Waiting for a game to load\n- Pausing between actions to let the world update\n- Giving time for chat messages to appear\n- Waiting for cooldowns\n\nNote: The agent will pause but will still return any new chat messages that arrived during the sleep."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -339,7 +342,7 @@ impl ToolCallFn for Sleep<'_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::number(
             "time",
-            "time to sleep in seconds as an unsigned integer",
+            "The duration to sleep in seconds. This is an unsigned integer representing how long to wait.\n\nExample: 5 (wait for 5 seconds), 10 (wait for 10 seconds)\n\nTip: 1-3 seconds is usually enough for chat to update, 5-10 seconds for waiting for party/game actions.",
         )]
     }
 
@@ -362,7 +365,7 @@ impl ToolCallFn for JoinParty<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "join the party of a player that has invited you or has a public party"
+        "Join an existing party created by another player. You can join parties from players who have invited you or from players who have set their party to public/open.\n\nUse this when:\n- Someone invites you to their party and you want to accept\n- A player has a public party and you want to join\n- You want to play with a specific player\n\nNote: Returns confirmation based on chat feedback - checks for success message or error messages like \"No party request from this player\"."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -395,7 +398,7 @@ impl ToolCallFn for JoinParty<'_, '_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "username",
-            "the name of the user whose party you want to join",
+            "The username of the player whose party you want to join. This player must have either invited you or have an open/public party.\n\nExample: \"Player123\" (join Player123's party)\n\nTip: You can check who is in the lobby with read_tab_list to find players with open parties.",
         )]
     }
 }
@@ -413,7 +416,7 @@ impl ToolCallFn for InviteParty<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "invite a player to your party (this will create a party if you're not already in one)"
+        "Invite a player to join your party. If you don't already have a party, this will create a new party and add the invited player. Parties allow you to play together and coordinate.\n\nUse this when:\n- You want to play with a friend and need to invite them\n- Creating a party to start a team game (duos, trios)\n- Adding players to your existing party\n\nNote: Returns success if invite sent, or error messages like \"player offline\", \"already invited\", or \"player in another party\"."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -453,7 +456,7 @@ impl ToolCallFn for InviteParty<'_, '_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "username",
-            "the name of the user who you want to invite to a party",
+            "The username of the player you want to invite to your party. The player must be online for the invite to work.\n\nExample: \"FriendPlayer\" (invite FriendPlayer to join your party)\n\nTip: Check if the player is online using read_tab_list first.",
         )]
     }
 }
@@ -472,7 +475,7 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "send a direct message to a player"
+        "Send a private message (DM) to any online player. This is similar to respond_to_user but allows you to initiate a conversation with any player rather than just responding to one who already messaged you.\n\nUse this when:\n- You want to start a private conversation with a specific player\n- Sending information to a player who isn't currently messaging you\n- Coordinating with teammates privately\n- Asking a player something without others seeing\n\nNote: Player must be online. Max 100 characters. Returns feedback based on whether the message was delivered."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -521,10 +524,13 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![
-            ToolCallArgDescriptor::string("username", "the user to send the direct message to"),
+            ToolCallArgDescriptor::string(
+                "username",
+                "The username of the player to send the direct message to. The player must be online for the message to go through.\n\nExample: \"PlayerName\"",
+            ),
             ToolCallArgDescriptor::string(
                 "message",
-                "the message to send to the user, cannot be longer than 100 characters",
+                "The private message content to send. Max 100 characters. This goes directly to the player's inbox.\n\nExample: \"Hey, want to play duo?\"",
             ),
         ]
     }
@@ -544,7 +550,7 @@ impl ToolCallFn for StopAgentLoop<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "stop running the agent loop meaning that you will not continue doing anything after calling this"
+        "Stop the agent loop and terminate all further execution. This is the proper way to end the agent's session when you're done or want to exit.\n\nUse this when:\n- Task is complete and you want to cleanly exit\n- Something went wrong and you want to stop\n- User tells you to stop/leave\n- You want to log off or disconnect\n\nNote: This will inform the user that you're stopping and then terminate the loop. Always use this when done rather than just stopping abruptly."
     }
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -582,7 +588,7 @@ impl ToolCallFn for GetInventory<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "get your current inventory, counts top down, left to right meaning the hotbar starts at slot 36"
+        "View your current inventory contents. This shows all items you are carrying, including items in your inventory and hotbar. Slots are numbered starting from 0 at the top-left, going row by row.\n\nUse this when:\n- Checking what items you have\n- Finding a specific item to use\n- Seeing your resources/materials\n- Before selecting a hotbar slot\n\nNote: Slot indices 0-8 are the hotbar (slots 36-44 in Minecraft's internal system). The inventory displays items from top-left to bottom-right."
     }
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -635,7 +641,7 @@ impl ToolCallFn for SelectHotbarSlot<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "select which item to hold in your main hand"
+        "Select which slot from your hotbar to hold as your current main hand item. This changes what item you're actively using when you interact with the world.\n\nUse this when:\n- You need to switch to a specific tool (pickaxe, sword, etc.)\n- Want to use a particular item\n- Preparing to mine/place blocks\n- Switching to combat items\n\nNote: Slots are indexed 0-8. Slot 0 is the leftmost hotbar slot, slot 8 is the rightmost. The index wraps around (selecting index 9 goes to slot 0)."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -654,7 +660,7 @@ impl ToolCallFn for SelectHotbarSlot<'_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::number(
             "index",
-            "the hotbar index to select as current main hand item",
+            "The hotbar slot index to select (0-8). 0 is the first slot on the left, 8 is the last on the right. The value wraps around (9 becomes 0, 10 becomes 1, etc.).\n\nExample: 0 (select the leftmost slot), 4 (select the middle slot)\n\nTip: Use get_inventory first to see what items are in each slot.",
         )]
     }
 
@@ -677,7 +683,7 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "send a message to party chat only"
+        "Send a message to your party's chat. This message is only visible to other members of your party, not to the public chat.\n\nUse this when:\n- Coordinating with party members\n- Planning strategy privately\n- Telling teammates what you're doing\n- Asking party members to do something\n\nNote: Only works if you're in a party. Returns an error if you're not in a party. Max 100 characters."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -713,7 +719,7 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "message",
-            "the message to send to party chat, max 100 characters",
+            "The message to send to your party members. This is private and only party members can see it. Max 100 characters.\n\nExample: \"Let's go to mid!\"",
         )]
     }
 
@@ -736,7 +742,7 @@ impl ToolCallFn for LeaveParty<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "leave your current party"
+        "Leave your current party. This removes you from the party you're in, whether you're the leader or just a member.\n\nUse this when:\n- You want to leave a party and play solo\n- Party leader is afk/hostile and you want to leave\n- You're done playing with the current group\n- Starting a new party with different players\n\nNote: If you're the leader, the party will be disbanded for all members. Returns confirmation based on chat message."
     }
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -878,7 +884,7 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "get information about your current party"
+        "Get detailed information about your current party, including the party leader, all members, whether the party is open/public, and if it's muted.\n\nUse this when:\n- Checking who is in your party\n- Seeing if party is open so others can join\n- Confirming a player joined your party\n- Checking party settings\n\nNote: Returns \"You are not in a party\" if you're not currently in a party. Returns a formatted summary of party details."
     }
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -932,7 +938,7 @@ impl ToolCallFn for AddFriend<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "send a friend request to a player"
+        "Send a friend request to a player. Once accepted, you can see when they're online and potentially play together.\n\nUse this when:\n- You meet a player you want to keep track of\n- Someone asks to be friends\n- You want to remember a good teammate\n\nNote: Returns success/failure based on server response. The friend request stays pending until the other player accepts or declines."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -967,7 +973,7 @@ impl ToolCallFn for AddFriend<'_, '_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "username",
-            "the username of the player to add as friend",
+            "The username of the player to send a friend request to. The player doesn't need to be online to send the request.\n\nExample: \"CoolPlayer123\"",
         )]
     }
 }
@@ -986,7 +992,7 @@ impl ToolCallFn for RemoveFriend<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "remove a player from your friends list"
+        "Remove a player from your friends list. This is the opposite of add_friend - it unfriends someone.\n\nUse this when:\n- You no longer want to be friends with someone\n- Freeing up friend slots (if limited)\n- Removing someone who was added by mistake\n\nNote: Returns confirmation or error if you're not friends with that player."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1020,7 +1026,7 @@ impl ToolCallFn for RemoveFriend<'_, '_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "username",
-            "the username of the player to remove from friends",
+            "The username of the player to remove from your friends list.\n\nExample: \"ExFriend123\"",
         )]
     }
 }
@@ -1181,7 +1187,7 @@ impl ToolCallFn for GetStats<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "get the bedwars stats of a player"
+        "Retrieve detailed Bedwars player statistics for any player. This shows their performance metrics including level, wins, kills, K/D ratio, beds broken, and more.\n\nUse this when:\n- Checking your own stats\n- Viewing another player's stats to see their skill level\n- Comparing players\n- Seeing someone's winstreak or division\n\nNote: Returns a formatted summary of the player's stats. Filters out spam messages to find the stats data."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1208,7 +1214,7 @@ impl ToolCallFn for GetStats<'_, '_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "username",
-            "the username of the player whose stats to get",
+            "The username of the player whose stats you want to view. Can be your own username or another player's.\n\nExample: \"YourUsername\" (check your own stats), \"ProPlayer123\" (check someone else's)",
         )]
     }
 }
@@ -1227,7 +1233,7 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "get the blocks that are near you"
+        "Scan and list blocks in the area around your current position. This allows you to see what blocks are nearby - useful for finding resources, navigating, or understanding your environment.\n\nUse this when:\n- Looking for specific blocks (ores, wood, etc.)\n- Navigating and understanding your surroundings\n- Finding resources to collect\n- Checking what's around you before moving\n\nNote: Default radius is 5 blocks in X/Y and 3 in Z. Use block_type to filter for specific blocks. Air blocks are excluded from results."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1317,19 +1323,19 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
         vec![
             ToolCallArgDescriptor::number(
                 "z_radius",
-                "the maximum z radius a block can have from you to be read, defaults to 3",
+                "How far in the Z axis (north/south) to scan for blocks. Default is 3. Positive and negative values scan in both directions from your position.\n\nExample: 5 (scan 5 blocks in each Z direction)",
             ),
             ToolCallArgDescriptor::number(
                 "x_radius",
-                "the maximum x radius a block can have from you to be read, defaults to 5",
+                "How far in the X axis (east/west) to scan for blocks. Default is 5. Scans in both directions from your position.\n\nExample: 10 (scan 10 blocks in each X direction)",
             ),
             ToolCallArgDescriptor::number(
                 "y_radius",
-                "the maximum y radius a block can have from you to be read, defaults to 5",
+                "How far in the Y axis (up/down) to scan for blocks. Default is 5. Scans both above and below your position.\n\nExample: 3 (scan 3 blocks up and down)",
             ),
             ToolCallArgDescriptor::string(
                 "block_type",
-                "block type in lower snake case. if none is provided will show all blocks in the radius (excluding air). example: oak_log",
+                "Filter to only show a specific type of block. Use Minecraft block names in lowercase with underscores. If not provided, shows all non-air blocks in range.\n\nExample values: \"oak_log\", \"diamond_ore\", \"glass\", \"stone\", \"cobblestone\"\n\nTip: Use this to quickly find specific resources like 'diamond_ore' or 'gold_ore'",
             ),
         ]
     }
@@ -1353,7 +1359,7 @@ impl ToolCallFn for PathFind<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "path find to a certain position, make sure that it is reachable, stairs are not traversible"
+        "Navigate the bot to a specific coordinate position using the built-in pathfinder. The pathfinder will find a walkable route to the target position.\n\nUse this when:\n- Moving to a specific location\n- Going to coordinates you got from get_nearby_blocks\n- Navigating to a destination\n- Finding your way around\n\nNote: The pathfinder cannot use stairs. Make sure the destination is reachable by walking. Returns success when within 1.5 blocks of target, or timeout/distance error if can't reach."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1446,19 +1452,19 @@ impl ToolCallFn for PathFind<'_> {
         vec![
             ToolCallArgDescriptor::number(
                 "x",
-                "the x coordinate of the position to pathfind to as signed integer",
+                "The X coordinate (east-west axis) of the target position to pathfind to. This is a signed integer.\n\nExample: 100 (move to x=100)",
             ),
             ToolCallArgDescriptor::number(
                 "y",
-                "the y coordinate of the position to pathfind to as signed integer",
+                "The Y coordinate (vertical axis) of the target position. This is the height/elevation. Must be a valid block position.\n\nExample: 64 (move to y=64, typical ground level)",
             ),
             ToolCallArgDescriptor::number(
                 "z",
-                "the z coordinate of the position to pathfind to as signed integer",
+                "The Z coordinate (north-south axis) of the target position to pathfind to. This is a signed integer.\n\nExample: -50 (move to z=-50)",
             ),
             ToolCallArgDescriptor::number(
                 "time_to_reach_goal",
-                "The estimated time in seconds it should take you to reach that goal.",
+                "Maximum time in seconds to spend trying to reach the destination before giving up. Default is 10 seconds. Increase for longer distances.\n\nExample: 30 (give up after 30 seconds if not reached)",
             ),
         ]
     }
@@ -1481,7 +1487,7 @@ impl ToolCallFn for GetCurrentPosition<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "get your current position"
+        "Get your current 3D coordinates (X, Y, Z) in the game world. This tells you exactly where the bot is positioned.\n\nUse this when:\n- Finding out where you are\n- Getting coordinates to use with path_find\n- Checking if you reached a destination\n- Understanding your location relative to something\n\nNote: Y coordinate is height (0 is bedrock, 64 is sea level in the overworld)."
     }
 
     fn invoke(&self, _args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1507,7 +1513,7 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "get the block names as string in a set radius around you"
+        "Scan the area around you and return a deduplicated list of unique block types present. Unlike get_nearby_blocks which shows exact positions, this gives you just the types of blocks you can find nearby.\n\nUse this when:\n- Quickly checking what resources are available nearby\n- Getting a summary of your surroundings\n- Looking for specific block types without needing positions\n\nNote: Default radius is 5 blocks in X/Y, 3 in Z. Shows only unique block types (no duplicates in the list)."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1565,15 +1571,15 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
         vec![
             ToolCallArgDescriptor::number(
                 "z_radius",
-                "the maximum z radius a block can have from you to be read, defaults to 3",
+                "How far in the Z axis (north/south) to scan. Default is 3. Scans in both directions.\n\nExample: 5",
             ),
             ToolCallArgDescriptor::number(
                 "x_radius",
-                "the maximum x radius a block can have from you to be read, defaults to 5",
+                "How far in the X axis (east/west) to scan. Default is 5. Scans in both directions.\n\nExample: 10",
             ),
             ToolCallArgDescriptor::number(
                 "y_radius",
-                "the maximum y radius a block can have from you to be read, defaults to 5",
+                "How far in the Y axis (up/down) to scan. Default is 5. Scans both above and below.\n\nExample: 3",
             ),
         ]
     }
@@ -1596,7 +1602,7 @@ impl ToolCallFn for DeclineFriendRequest<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "decline a friend request that you received"
+        "Decline a pending friend request you received from another player. This rejects their request to add you as a friend.\n\nUse this when:\n- Someone sent you a friend request you don't want to accept\n- Clearing out unwanted friend requests\n\nNote: You must have received a request from this player to decline it."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1611,7 +1617,7 @@ impl ToolCallFn for DeclineFriendRequest<'_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "username",
-            "the username whose friend request should be declined",
+            "The username of the player whose friend request you want to decline.\n\nExample: \"UnknownPlayer\"",
         )]
     }
 }
@@ -1629,7 +1635,7 @@ impl ToolCallFn for AcceptFriendRequest<'_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "accept a friend request that you received"
+        "Accept a pending friend request you received from another player. Once accepted, they will be added to your friends list.\n\nUse this when:\n- Someone sent you a friend request and you want to accept it\n- Adding a player as a friend\n\nNote: You must have received a request from this player to accept it."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1644,7 +1650,7 @@ impl ToolCallFn for AcceptFriendRequest<'_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "username",
-            "the username whose friend request should be accepted",
+            "The username of the player whose friend request you want to accept.\n\nExample: \"NewFriend123\"",
         )]
     }
 }
@@ -1663,7 +1669,7 @@ impl ToolCallFn for RunCommand<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "run any command"
+        "Execute any Minecraft server command directly. This gives you flexibility to run commands that don't have dedicated tools.\n\nUse this when:\n- Running a command not covered by other tools\n- Accessing server-specific features\n- Using administrative commands\n- Running custom server commands\n\nNote: Returns the chat output/response from the server. Use this when you know the exact command syntax for the server."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1697,10 +1703,13 @@ impl ToolCallFn for RunCommand<'_, '_> {
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![
-            ToolCallArgDescriptor::string("command", "the command category to run"),
+            ToolCallArgDescriptor::string(
+                "command",
+                "The main command category to run (without the slash). This is the command name.\n\nExample: \"warp\", \"spawn\", \"shop\", \"help\"",
+            ),
             ToolCallArgDescriptor::string(
                 "args",
-                "the arguments to provide for additional configuration of the main command",
+                "Additional arguments to pass to the command. This is everything after the command name.\n\nExample: \"nether\" (to run /warp nether), \"playerName\" (to run /stats playerName)\n\nLeave empty if the command takes no arguments.",
             ),
         ]
     }
@@ -1720,7 +1729,7 @@ impl ToolCallFn for QuickCommand<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "run quick commands to get your own stats, get party info, join a game, etc..."
+        "Run commonly used quick commands for game navigation and basic status checks. This is a simplified interface for frequent actions like going to spawn, joining games, checking stats, etc.\n\nUse this when:\n- Quickly going to spawn\n- Joining duo/trio games\n- Checking your own stats\n- Checking your ping\n\nThis is a convenient shortcut - these are the same commands you'd run via run_command but easier to access."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1773,13 +1782,7 @@ impl ToolCallFn for QuickCommand<'_, '_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "command",
-            "quickcommand, choice of one of these choices:
-
-spawn: teleport to the lobby spawn location
-playtwo: join a duo game
-playthree: join a trio game
-stats: get your own stats
-ping: get your current ping",
+            "The quick command to run. Choose from:\n\n- \"spawn\": Teleport to the lobby spawn location\n- \"playtwo\": Join a duo (2-player) game\n- \"playthree\": Join a trio (3-player) game  \n- \"stats\": View your own Bedwars stats\n- \"ping\": Check your current network latency\n\nExample: \"spawn\" (go to lobby), \"playtwo\" (join duo game)",
         )]
     }
 }
@@ -1798,7 +1801,7 @@ impl ToolCallFn for JoinGame<'_, '_> {
     }
 
     fn get_description(&self) -> &'static str {
-        "join someone's private game"
+        "Join a private game hosted by another player. This allows you to join games that players have made private and shared the link/code for.\n\nUse this when:\n- Someone shares their private game with you\n- Joining a friend's custom game\n- Entering a specific private lobby\n\nNote: The player must have an active private game and you need their username. Returns error if no private game found for that player."
     }
 
     fn invoke(&self, args: &serde_json::Value) -> Pin<Box<dyn Future<Output = String> + Send>> {
@@ -1830,7 +1833,7 @@ impl ToolCallFn for JoinGame<'_, '_> {
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
         vec![ToolCallArgDescriptor::string(
             "username",
-            "whose private game to join",
+            "The username of the player whose private game you want to join. They must currently be in a private game for this to work.\n\nExample: \"GameHost123\"",
         )]
     }
 }
