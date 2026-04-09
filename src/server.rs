@@ -15,7 +15,7 @@ use crate::ENV_VARS;
 use crate::{bot::Instruction, buffer::FifoBuffer};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
+const CLIENT_TIMEOUT: Duration = Duration::from_mins(1);
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", content = "data")]

@@ -73,7 +73,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                                 bot.walk(WalkDirection::BackwardLeft);
                                 tokio::time::sleep(Duration::from_millis(500)).await;
                                 bot.walk(WalkDirection::BackwardRight);
-                                tokio::time::sleep(Duration::from_millis(1000)).await;
+                                tokio::time::sleep(Duration::from_secs(1)).await;
                                 bot.walk(WalkDirection::BackwardLeft);
                                 tokio::time::sleep(Duration::from_millis(500)).await;
                                 bot.walk(WalkDirection::None);
@@ -95,7 +95,12 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                                             .unwrap_or_default()
                                             .to_string()
                                             .to_lowercase()
-                                            .contains("[CoralProxy]")
+                                            .contains(
+                                                ENV_VARS
+                                                    .bot_clan_name
+                                                    .as_deref()
+                                                    .unwrap_or("<UNK>"),
+                                            )
                                     })
                                 {
                                     bot.chat("/hub");
@@ -248,7 +253,7 @@ async fn join_bedwars_lobby(bot: &Client) {
         else {
             return eprintln!("couldn't get the bed idx");
         };
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
         container.left_click(bed_idx);
         bot.set_selected_hotbar_slot(3);
     } else {
@@ -276,8 +281,7 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         && let Some(message) = &captures.get(2)
         && ["Afkara", "NickAc", "8hi"].contains(&username.as_str())
     {
-        handle_admin_dm(message.as_str().trim(), username.as_str(), bot, state)
-            .await;
+        handle_admin_dm(message.as_str().trim(), username.as_str(), bot, state).await;
     }
 
     if message.contains("Roby98 è entrato nella lobby.") {

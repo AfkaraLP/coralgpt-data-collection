@@ -135,7 +135,7 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
     }
 
     fn get_timeout_wait(&self) -> Duration {
-        Duration::from_millis(15000)
+        Duration::from_secs(15)
     }
 }
 
@@ -724,7 +724,7 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
     }
 
     fn get_timeout_wait(&self) -> Duration {
-        Duration::from_millis(1000)
+        Duration::from_secs(1)
     }
 }
 
@@ -1206,8 +1206,8 @@ impl ToolCallFn for GetStats<'_, '_> {
                 .take(25);
             let stats = PlayerStats::parse_from_chat(past_messages.map(ToString::to_string));
             let stats_text = stats.player_stats_to_llm_text();
-            println!("got stats: {:#?}", stats_text);
-            format!("{username}'s stats: {}", stats_text)
+            println!("got stats: {stats_text:#?}");
+            format!("{username}'s stats: {stats_text}")
         })
     }
 
@@ -1391,7 +1391,7 @@ impl ToolCallFn for PathFind<'_> {
                         BlockPosGoal(BlockPos::new(x, y, z)),
                         PathfinderOpts::new().allow_mining(false).max_timeout(
                             azalea::pathfinder::astar::PathfinderTimeout::Time(
-                                Duration::from_millis(1000),
+                                Duration::from_secs(1),
                             ),
                         ),
                     )

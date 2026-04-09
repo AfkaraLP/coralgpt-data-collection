@@ -33,11 +33,13 @@ pub struct EnvVars {
     pub port: u16,
     pub db_path: String,
     pub openai_client: Option<OpenAIClient>,
+    pub bot_clan_name: Option<String>,
 }
 
 pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
     let username: String = dotenvy::var("USERNAME").expect("Please set USERNAME env var");
     let password: String = dotenvy::var("PASSWORD").expect("Please set PASSWORD env var");
+    let bot_clan_name: Option<String> = dotenvy::var("BOT_CLAN_NAME").ok();
     let port: u16 = dotenvy::var("PORT")
         .expect("Please set PORT env var")
         .parse()
@@ -60,6 +62,7 @@ pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
         port,
         db_path,
         openai_client,
+        bot_clan_name,
     }
 });
 
@@ -145,7 +148,7 @@ async fn main() -> AppExit {
     let client = ClientBuilder::new()
         .set_handler(handle)
         .set_state(state)
-        .reconnect_after(Duration::from_secs(60))
+        .reconnect_after(Duration::from_mins(1))
         .start(account, "wind.coralmc.it");
 
     tokio::select! {
