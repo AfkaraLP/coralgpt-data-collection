@@ -2,7 +2,7 @@ use std::{collections::VecDeque, ops::Deref};
 
 use azalea::FormattedText;
 
-use crate::IsSpamMessage__PiperizeTrait;
+use crate::is_spam_message;
 
 #[derive(Clone, Default, Debug)]
 pub struct FifoBuffer<const N: usize, T> {
@@ -45,7 +45,7 @@ impl<const N: usize> ChatFifoOps for FifoBuffer<N, FormattedText> {
     fn get_past_n_messages(&self, verbose: bool, n: usize) -> Vec<String> {
         self.iter()
             .map(ToString::to_string)
-            .filter(|v| !v.is_spam_message() || verbose)
+            .filter(|v| !is_spam_message(v) || verbose)
             .take(n)
             .collect::<Vec<String>>()
             .iter()

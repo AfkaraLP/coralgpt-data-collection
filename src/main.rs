@@ -7,7 +7,6 @@ use azalea::{
     prelude::{Account, Component},
 };
 use azalea::{FormattedText, prelude::*};
-use piperize::piperize;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::signal;
@@ -37,17 +36,17 @@ pub struct EnvVars {
 }
 
 pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
-    let username: String = dotenv::var("USERNAME").expect("Please set USERNAME env var");
-    let password: String = dotenv::var("PASSWORD").expect("Please set PASSWORD env var");
-    let port: u16 = dotenv::var("PORT")
+    let username: String = dotenvy::var("USERNAME").expect("Please set USERNAME env var");
+    let password: String = dotenvy::var("PASSWORD").expect("Please set PASSWORD env var");
+    let port: u16 = dotenvy::var("PORT")
         .expect("Please set PORT env var")
         .parse()
         .unwrap();
-    let db_path: String = dotenv::var("DB_PATH").expect("Please set DB_PATH env var");
-    let openai_client = if let Ok(url) = dotenv::var("OPENAI_URL")
-        && let Ok(model) = dotenv::var("MODEL")
+    let db_path: String = dotenvy::var("DB_PATH").expect("Please set DB_PATH env var");
+    let openai_client = if let Ok(url) = dotenvy::var("OPENAI_URL")
+        && let Ok(model) = dotenvy::var("MODEL")
     {
-        let header_kv = dotenv::var("AUTH").ok().and_then(|v| {
+        let header_kv = dotenvy::var("AUTH").ok().and_then(|v| {
             v.split_once('|')
                 .map(|(k, v)| (k.to_string(), v.to_string()))
         });
@@ -92,7 +91,6 @@ impl State {
 }
 
 #[must_use]
-#[piperize]
 pub fn is_spam_message<S: AsRef<str>>(m: S) -> bool {
     m.as_ref().contains("è entrato nella lobby.")
         || m.as_ref().starts_with("CORALMC")
@@ -188,7 +186,6 @@ async fn shutdown_signal() {
 /// # Errors
 ///
 /// - shouldn't fail, opens db on path and instantiates it if it doesn't exist
-#[piperize]
 pub fn instantiate_db(path: &str) -> rusqlite::Result<rusqlite::Connection> {
     let connection = rusqlite::Connection::open(path)?;
     connection.execute(

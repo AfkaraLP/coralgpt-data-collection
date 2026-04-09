@@ -22,7 +22,7 @@ pub trait IntoPinBoxString<'a>: Sized + Send + ToString + 'a {
 
 impl<'a, T: Sized + Send + ToString + 'a> IntoPinBoxString<'a> for T {}
 
-use crate::{ENV_VARS, IsSpamMessage__PiperizeTrait, State, buffer::ChatFifoOps};
+use crate::{ENV_VARS, State, buffer::ChatFifoOps, is_spam_message};
 
 const SUBAGENT_PROMPT: &str = include_str!("./SUBAGENT.md");
 pub struct SpawnSubAgent<'a> {
@@ -281,7 +281,7 @@ impl ToolCallFn for ReadChatHistory<'_> {
                 .await
                 .iter()
                 .map(ToString::to_string)
-                .filter(|v| verbose || !v.is_spam_message())
+                .filter(|v| verbose || !is_spam_message(v))
                 .take(num_messages.try_into().unwrap_or(20))
                 .fold(String::new(), |mut acc, v| {
                     _ = writeln!(&mut acc, "{v}");
@@ -500,7 +500,7 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
                 .await
                 .iter()
                 .map(ToString::to_string)
-                .filter(|v| !v.is_spam_message())
+                .filter(|v| !is_spam_message(v))
                 .take(10)
                 .collect();
 
@@ -1202,7 +1202,7 @@ impl ToolCallFn for GetStats<'_, '_> {
             let past_messages = past_messages.lock().await;
             let past_messages = past_messages
                 .iter()
-                .filter(|v| !v.to_string().is_spam_message())
+                .filter(|v| !is_spam_message(&v.to_string()))
                 .take(25);
             let stats = PlayerStats::parse_from_chat(past_messages.map(ToString::to_string));
             let stats_text = stats.player_stats_to_llm_text();

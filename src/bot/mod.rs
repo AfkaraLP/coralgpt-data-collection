@@ -11,7 +11,6 @@ use azalea::{
     registry::builtin::ItemKind,
 };
 use openai_client::OpenAIClient;
-use piperize::piperize;
 use regex::Regex;
 use tokio::{sync::mpsc::Sender, time};
 
@@ -48,7 +47,6 @@ pub enum BotLocation {
     BedwarsLobby,
 }
 
-#[piperize]
 pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<()> {
     match event {
         Event::Spawn => {
@@ -101,7 +99,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                                     })
                                 {
                                     bot.chat("/hub");
-                                    bot.join_bedwars_lobby().await;
+                                    join_bedwars_lobby(&bot).await;
                                 }
                             }
                         });
@@ -123,16 +121,16 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                         *location = BotLocation::BedwarsLobby;
                     }
                     if state.location.lock().await.eq(&BotLocation::Lobby) {
-                        bot.join_bedwars_lobby().await;
+                        join_bedwars_lobby(&bot).await;
                     }
                 }
             });
         }
         Event::Chat(message) => {
-            bot.handle_message_event(message, &state).await;
+            handle_message_event(&bot, message, &state).await;
         }
         Event::Tick => {
-            bot.handle_instruction(&state).await;
+            handle_instruction(&bot, &state).await;
         }
         _ => {}
     }
@@ -143,12 +141,10 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
 static DM_MSG_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(Da \w{3,16}\) .*$").unwrap());
 
-#[piperize]
 pub fn is_dm_message<S: AsRef<str>>(msg: S) -> bool {
     DM_MSG_REGEX.is_match(msg.as_ref())
 }
 
-#[piperize]
 async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str) {
     if let Some(ai_client) = &ENV_VARS.openai_client {
         let username = &ENV_VARS.username;
@@ -196,7 +192,6 @@ async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str) {
     }
 }
 
-#[piperize]
 async fn handle_instruction(bot: &Client, state: &State) {
     let mut guard = state.recv_instruction.lock().await;
     if let Some(recv) = guard.as_mut()
@@ -205,7 +200,7 @@ async fn handle_instruction(bot: &Client, state: &State) {
         match instruction {
             Instruction::Chat(message) => bot.chat(message),
             Instruction::Jump => bot.jump(),
-            Instruction::TabList(sender) => bot.send_tab_list(sender).await,
+            Instruction::TabList(sender) => send_tab_list(bot, sender).await,
             Instruction::Walk(direction) => bot.walk(direction),
             Instruction::Sneak(sneaking) => bot.set_crouching(sneaking),
             Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
@@ -213,13 +208,12 @@ async fn handle_instruction(bot: &Client, state: &State) {
                 let _ = sender.send(bot.selected_hotbar_slot()).await;
             }
             Instruction::Agent(prompt) => {
-                bot.handle_agent_instruction(state, &prompt).await;
+                handle_agent_instruction(bot, state, &prompt).await;
             }
         }
     }
 }
 
-#[piperize]
 async fn send_tab_list(bot: &Client, sender: Sender<String>) {
     let mut players = String::new();
     for (_, player) in bot.tab_list() {
@@ -235,7 +229,6 @@ async fn send_tab_list(bot: &Client, sender: Sender<String>) {
     }
 }
 
-#[piperize]
 async fn join_bedwars_lobby(bot: &Client) {
     bot.set_selected_hotbar_slot(4);
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -266,10 +259,9 @@ async fn join_bedwars_lobby(bot: &Client) {
 static DM_PARSE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(Da (\w+)\) (.*)").unwrap());
 
-#[piperize]
 async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, state: &State) {
     println!("{}", message.message().to_ansi());
-    bot.handle_register_login(&message, state).await;
+    handle_register_login(bot, &message, state).await;
     {
         let mut messages = state.messages.lock().await;
         messages.push(message.message());
@@ -278,16 +270,13 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         broadcaster.send(WsServerMessage::NewMessage(message.message().to_html()));
     }
     let message = message.message().to_string();
-    if message.as_str().is_dm_message()
+    if is_dm_message(message.as_str())
         && let Some(captures) = DM_PARSE_REGEX.captures(&message)
         && let Some(username) = captures.get(1)
         && let Some(message) = &captures.get(2)
         && ["Afkara", "NickAc", "8hi"].contains(&username.as_str())
     {
-        message
-            .as_str()
-            .trim()
-            .handle_admin_dm(username.as_str(), bot, state)
+        handle_admin_dm(message.as_str().trim(), username.as_str(), bot, state)
             .await;
     }
 
@@ -314,7 +303,6 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
     }
 }
 
-#[piperize]
 async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &State) {
     if let Some(ai_client) = &ENV_VARS.openai_client
         && message.starts_with("/agent")
@@ -374,7 +362,6 @@ async fn notify_roby_join() {
     }
 }
 
-#[piperize]
 async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket, state: &State) {
     let pwd = &ENV_VARS.password;
     if message
