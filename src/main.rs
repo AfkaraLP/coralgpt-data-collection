@@ -9,8 +9,8 @@ use azalea::{
 use azalea::{FormattedText, prelude::*};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
-use tokio::signal;
 use tokio::sync::{Mutex, mpsc::Receiver};
+use tokio::{signal, task::JoinHandle};
 
 use crate::buffer::FifoBuffer;
 use crate::server::{Broadcaster, MessageLog, bot_messages, ws_handler};
@@ -50,7 +50,10 @@ pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
     {
         let header_kv = dotenvy::var("AUTH").ok().and_then(|v| {
             v.split_once('|')
-                .map(|(k, v)| openai_client::OpenAIAuth::ApiKey { key: k.to_string(), value: v.to_string() })
+                .map(|(k, v)| openai_client::OpenAIAuth::ApiKey {
+                    key: k.to_string(),
+                    value: v.to_string(),
+                })
         });
         Some(OpenAIClient::new(url, model, header_kv))
     } else {
@@ -73,6 +76,7 @@ pub struct State {
     pub conn: Arc<Mutex<Option<rusqlite::Connection>>>,
     pub messages: Arc<Mutex<FifoBuffer<1000, FormattedText>>>,
     pub broadcaster: Option<Arc<Broadcaster>>,
+    pub bot_activity_task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl State {

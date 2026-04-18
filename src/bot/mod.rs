@@ -53,7 +53,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
             let pwd = &ENV_VARS.password;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             bot.chat(format!("/login {pwd}"));
-            tokio::spawn(async move {
+            let task = tokio::task::spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(5));
 
                 loop {
@@ -130,6 +130,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                     }
                 }
             });
+            state.bot_activity_task.lock().await.replace(task);
         }
         Event::Chat(message) => {
             handle_message_event(&bot, message, &state).await;
