@@ -421,15 +421,19 @@ impl AiFunctionality for Client {
         tools: ToolMap<'_>,
     ) {
         println!("running agent loop");
+        let messages = vec![
+            openai_client::ChatCompletionMessageParam::new_system(system_prompt),
+            openai_client::ChatCompletionMessageParam::new_user(prompt),
+        ];
         let res = ai_client
-            .run_agent(system_prompt, prompt, &tools)
+            .run_agent(messages, &tools)
             .await
             .map_err(|e| {
                 self.chat(format!("/msg {username} failed to run agent loop..."));
                 println!("{e:#?}");
             });
-        if let Ok(res) = res {
-            eprintln!("agent loop final response: {res}");
+        if let Ok((res, _)) = res {
+            eprintln!("agent loop final response: {}", res.content.as_ref().unwrap_or(&String::new()));
         }
         self.chat(format!("/msg {username} finished agent loop..."));
     }

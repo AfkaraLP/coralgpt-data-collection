@@ -50,7 +50,7 @@ pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
     {
         let header_kv = dotenvy::var("AUTH").ok().and_then(|v| {
             v.split_once('|')
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|(k, v)| openai_client::OpenAIAuth::ApiKey { key: k.to_string(), value: v.to_string() })
         });
         Some(OpenAIClient::new(url, model, header_kv))
     } else {

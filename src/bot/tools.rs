@@ -5,7 +5,7 @@ use azalea::{
     pathfinder::{PathfinderOpts, goals::BlockPosGoal},
     prelude::PathfinderClientExt,
 };
-use openai_client::{ToolCallArgDescriptor, ToolCallArgType, ToolCallFn, ToolMap};
+use openai_client::{ChatCompletionMessageParam, ToolCallArgDescriptor, ToolCallFn, ToolMap};
 use std::{fmt::Write, pin::Pin, time::Duration};
 use tokio::{
     sync::Mutex,
@@ -59,10 +59,17 @@ impl ToolCallFn for SpawnSubAgent<'_> {
                 return "for some reason agent is not available right now".into();
             };
             let subagent_response = client
-                .run_agent(SUBAGENT_PROMPT, task, self.subagent_tools)
+                .run_agent(
+                    vec![
+                        ChatCompletionMessageParam::new_system(SUBAGENT_PROMPT),
+                        ChatCompletionMessageParam::new_user(&task),
+                    ],
+                    self.subagent_tools,
+                )
                 .await
-                .unwrap_or(String::from("Subagent Run Failed"));
-            eprintln!("subagent summary: {subagent_response}");
+                .map(|(res, _)| res.content.unwrap_or_default())
+                .unwrap_or_else(|_| String::from("Subagent Run Failed"));
+            eprintln!("subagent summary: {}", subagent_response);
             subagent_response
         };
         Box::pin(agent_loop)
