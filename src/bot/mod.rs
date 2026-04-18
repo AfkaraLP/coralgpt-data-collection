@@ -150,9 +150,8 @@ pub fn is_dm_message<S: AsRef<str>>(msg: S) -> bool {
     DM_MSG_REGEX.is_match(msg.as_ref())
 }
 
-async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str) {
+async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str, username: &str) {
     if let Some(ai_client) = &ENV_VARS.openai_client {
-        let username = &ENV_VARS.username;
         let subagent_tools = ToolMap::new()
             .register_tool(RespondToUser::new(bot, username, state))
             .register_tool(Sleep::new(state))
@@ -213,7 +212,7 @@ async fn handle_instruction(bot: &Client, state: &State) {
                 let _ = sender.send(bot.selected_hotbar_slot()).await;
             }
             Instruction::Agent(prompt) => {
-                handle_agent_instruction(bot, state, &prompt).await;
+                handle_agent_instruction(bot, state, &prompt, &ENV_VARS.username).await;
             }
         }
     }
@@ -308,53 +307,9 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
 }
 
 async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &State) {
-    if let Some(ai_client) = &ENV_VARS.openai_client
-        && message.starts_with("/agent")
-    {
-        let subagent_tools = ToolMap::new()
-            .register_tool(RespondToUser::new(bot, username, state))
-            .register_tool(Sleep::new(state))
-            .register_tool(SendDirectMessage::new(bot, state))
-            .register_tool(SendChatMessage::new(bot, state))
-            .register_tool(QuickCommand::new(bot, state))
-            .register_tool(RunCommand::new(bot, state))
-            .register_tool(NearbyBlockKinds::new(bot))
-            .register_tool(PathFind::new(bot))
-            .register_tool(GetCurrentPosition::new(bot))
-            .register_tool(GetStats::new(bot, state))
-            .register_tool(ReadChatHistory::new(state))
-            .register_tool(ReadTabList::new(bot))
-            .register_tool(AcceptFriendRequest::new(bot))
-            .register_tool(DeclineFriendRequest::new(bot))
-            .register_tool(GetInventory::new(bot))
-            .register_tool(SelectHotbarSlot::new(bot))
-            .register_tool(JoinParty::new(bot, state))
-            .register_tool(JoinGame::new(bot, state))
-            .register_tool(InviteParty::new(bot, state))
-            .register_tool(SendPartyMessage::new(bot, state))
-            .register_tool(LeaveParty::new(bot, state))
-            .register_tool(GetPartyInfo::new(bot, state))
-            .register_tool(AddFriend::new(bot, state))
-            .register_tool(GetNearbyBlocks::new(bot))
-            .register_tool(RemoveFriend::new(bot, state));
-        let tools_map = ToolMap::new()
-            .register_tool(RespondToUser::new(bot, username, state))
-            .register_tool(SpawnSubAgent::new(&subagent_tools));
-        let mut system_prompt = format!("{SYSTEM_PROMPT}\n\n## Available Subagent tools:\n\n");
-        for tool in subagent_tools.values() {
-            _ = writeln!(&mut system_prompt, "{}", tool.get_name());
-        }
-        bot.run_agent_loop(
-            ai_client,
-            &system_prompt,
-            message.strip_prefix("/agent").unwrap_or(message),
-            username,
-            tools_map,
-        )
-        .await;
-    }
-    if ENV_VARS.openai_client.is_none() {
-        bot.chat(format!("/msg {username} No AI Client, cannot run agent..."));
+    if message.starts_with("/agent") {
+        let prompt = message.strip_prefix("/agent").unwrap_or(message);
+        handle_agent_instruction(bot, state, prompt, username).await;
     }
 }
 
@@ -425,15 +380,15 @@ impl AiFunctionality for Client {
             openai_client::ChatCompletionMessageParam::new_system(system_prompt),
             openai_client::ChatCompletionMessageParam::new_user(prompt),
         ];
-        let res = ai_client
-            .run_agent(messages, &tools)
-            .await
-            .map_err(|e| {
-                self.chat(format!("/msg {username} failed to run agent loop..."));
-                println!("{e:#?}");
-            });
+        let res = ai_client.run_agent(messages, &tools).await.map_err(|e| {
+            self.chat(format!("/msg {username} failed to run agent loop..."));
+            println!("{e:#?}");
+        });
         if let Ok((res, _)) = res {
-            eprintln!("agent loop final response: {}", res.content.as_ref().unwrap_or(&String::new()));
+            eprintln!(
+                "agent loop final response: {}",
+                res.content.as_ref().unwrap_or(&String::new())
+            );
         }
         self.chat(format!("/msg {username} finished agent loop..."));
     }

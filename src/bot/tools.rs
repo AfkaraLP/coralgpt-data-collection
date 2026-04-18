@@ -67,9 +67,11 @@ impl ToolCallFn for SpawnSubAgent<'_> {
                     self.subagent_tools,
                 )
                 .await
-                .map(|(res, _)| res.content.unwrap_or_default())
-                .unwrap_or_else(|_| String::from("Subagent Run Failed"));
-            eprintln!("subagent summary: {}", subagent_response);
+                .map_or_else(
+                    |_| String::from("Subagent Run Failed"),
+                    |(res, _)| res.content.unwrap_or_default(),
+                );
+            eprintln!("subagent summary: {subagent_response}");
             subagent_response
         };
         Box::pin(agent_loop)
@@ -1209,7 +1211,7 @@ impl ToolCallFn for GetStats<'_, '_> {
             let past_messages = past_messages.lock().await;
             let past_messages = past_messages
                 .iter()
-                .filter(|v| !is_spam_message(&v.to_string()))
+                .filter(|v| !is_spam_message(v.to_string()))
                 .take(25);
             let stats = PlayerStats::parse_from_chat(past_messages.map(ToString::to_string));
             let stats_text = stats.player_stats_to_llm_text();
