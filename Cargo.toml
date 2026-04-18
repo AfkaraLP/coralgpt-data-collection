@@ -18,3 +18,4 @@ regex = "1.12.3"
 serde = { version = "1.0.228", features = ["derive"] }
 openai-client = { git = "https://github.com/AfkaraLP/openai-client.git", version = "0.1.0" }
 dotenvy = "0.15.7"
+async-trait = "0.1"
