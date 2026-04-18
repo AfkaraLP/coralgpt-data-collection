@@ -113,7 +113,7 @@ impl WsSession {
         }
     }
 
-    fn handle_message(&mut self, text: &str, ctx: &mut ws::WebsocketContext<Self>) {
+    fn handle_message(&self, text: &str, ctx: &mut ws::WebsocketContext<Self>) {
         if let Ok(client_msg) = serde_json::from_str::<WsClientMessage>(text) {
             let tx = self.instruction_tx.clone();
 
@@ -154,13 +154,14 @@ impl WsSession {
         }
     }
 
-    fn handle_client_get_messages(&mut self, ctx: &mut ws::WebsocketContext<WsSession>) {
+    fn handle_client_get_messages(&self, ctx: &mut ws::WebsocketContext<Self>) {
         let messages = self.messages.clone();
         ctx.spawn(
             async move {
                 let msgs = messages.lock().await;
                 let messages_vec: Vec<String> =
                     msgs.iter().rev().map(FormattedText::to_html).collect();
+                drop(msgs);
                 WsServerMessage::Messages(messages_vec)
             }
             .into_actor(self)
@@ -173,8 +174,8 @@ impl WsSession {
     }
 
     fn handle_client_get_slot(
-        &mut self,
-        ctx: &mut ws::WebsocketContext<WsSession>,
+        &self,
+        ctx: &mut ws::WebsocketContext<Self>,
         tx: &Sender<Instruction>,
     ) {
         let tx = tx.clone();
@@ -200,8 +201,8 @@ impl WsSession {
     }
 
     fn handle_client_tab(
-        &mut self,
-        ctx: &mut ws::WebsocketContext<WsSession>,
+        &self,
+        ctx: &mut ws::WebsocketContext<Self>,
         tx: &Arc<Sender<Instruction>>,
     ) {
         let tx = tx.clone();
@@ -381,6 +382,7 @@ impl actix::StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession 
     }
 }
 
+#[allow(clippy::future_not_send)]
 #[get("/ws")]
 pub async fn ws_handler(
     req: HttpRequest,
@@ -431,10 +433,10 @@ pub async fn bot_jump(data: web::Data<Arc<Sender<Instruction>>>) -> impl Respond
 pub async fn bot_tab(data: web::Data<Arc<Sender<Instruction>>>) -> impl Responder {
     let (tx, mut rx) = mpsc::channel::<String>(1);
     match data.send(Instruction::TabList(tx)).await {
-        Ok(()) => match rx.recv().await {
-            Some(tablist) => tablist,
-            None => "failed receiving tablist".to_string(),
-        },
+        Ok(()) => rx
+            .recv()
+            .await
+            .unwrap_or_else(|| "failed receiving tablist".to_string()),
         Err(_) => "failed sending tab instruction".to_string(),
     }
 }
@@ -506,10 +508,10 @@ pub async fn bot_slot(
 pub async fn bot_get_slot(data: web::Data<Arc<Sender<Instruction>>>) -> impl Responder {
     let (tx, mut rx) = mpsc::channel::<u8>(1);
     match data.send(Instruction::GetSlot(tx)).await {
-        Ok(()) => match rx.recv().await {
-            Some(slot) => slot.to_string(),
-            None => "failed".to_string(),
-        },
+        Ok(()) => rx
+            .recv()
+            .await
+            .map_or_else(|| "failed".to_string(), |slot| slot.to_string()),
         Err(_) => "failed".to_string(),
     }
 }

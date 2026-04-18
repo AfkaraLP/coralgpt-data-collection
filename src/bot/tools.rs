@@ -23,7 +23,7 @@ pub struct SpawnSubAgent<'a> {
 }
 
 impl<'a> SpawnSubAgent<'a> {
-    pub fn new(subagent_tools: &'a ToolMap<'a>) -> Self {
+    pub const fn new(subagent_tools: &'a ToolMap<'a>) -> Self {
         Self { subagent_tools }
     }
 }
@@ -83,7 +83,7 @@ impl ToolCallFn for SpawnSubAgent<'_> {
 pub struct SendChatMessage<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> SendChatMessage<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -105,15 +105,13 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
         )]
     }
 
-    async fn invoke(
-        &self,
-        args: &serde_json::Value,
-    ) -> String {
+    async fn invoke(&self, args: &serde_json::Value) -> String {
         let Some(serde_json::Value::String(message)) = args.get("message") else {
             return "please provide a \"message\" field in the tool call".to_string();
         };
         if message.chars().count() > 100 {
-            return "Message exceeds 100 characters, please shorten it and try again...".to_string();
+            return "Message exceeds 100 characters, please shorten it and try again..."
+                .to_string();
         }
         let mut response = String::new();
         let past_messages = self.1.messages.clone();
@@ -140,7 +138,7 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
 pub struct RespondToUser<'a, 'b, 'c>(&'a Client, &'b str, &'c State);
 
 impl<'a, 'b, 'c> RespondToUser<'a, 'b, 'c> {
-    pub fn new(client: &'a Client, username: &'b str, state: &'c State) -> Self {
+    pub const fn new(client: &'a Client, username: &'b str, state: &'c State) -> Self {
         Self(client, username, state)
     }
 }
@@ -170,7 +168,8 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
             return "message has to be of type string".to_string();
         };
         if message.chars().count() > 100 {
-            return "Message longer than 100 characters, please shorten it and try again...".to_string();
+            return "Message longer than 100 characters, please shorten it and try again..."
+                .to_string();
         }
         let mut response = String::new();
         let username = self.1;
@@ -194,7 +193,7 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
 pub struct ReadTabList<'a>(&'a Client);
 
 impl<'a> ReadTabList<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub const fn new(client: &'a Client) -> Self {
         Self(client)
     }
 }
@@ -229,7 +228,7 @@ impl ToolCallFn for ReadTabList<'_> {
 pub struct ReadChatHistory<'a>(&'a State);
 
 impl<'a> ReadChatHistory<'a> {
-    pub fn new(state: &'a State) -> Self {
+    pub const fn new(state: &'a State) -> Self {
         Self(state)
     }
 }
@@ -289,7 +288,7 @@ impl ToolCallFn for ReadChatHistory<'_> {
 pub struct Sleep<'a>(&'a State);
 
 impl<'a> Sleep<'a> {
-    pub fn new(state: &'a State) -> Self {
+    pub const fn new(state: &'a State) -> Self {
         Self(state)
     }
 }
@@ -310,8 +309,7 @@ impl ToolCallFn for Sleep<'_> {
                 if let Some(num) = num.as_u64() {
                     let message_state = self.0.messages.clone();
                     sleep(Duration::from_secs(num)).await;
-                    let past_messages_count: usize =
-                        num.try_into().unwrap_or(25_usize).div_ceil(5);
+                    let past_messages_count: usize = num.try_into().unwrap_or(25_usize).div_ceil(5);
 
                     let past_messages = message_state
                         .lock()
@@ -348,7 +346,7 @@ impl ToolCallFn for Sleep<'_> {
 pub struct JoinParty<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> JoinParty<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -398,7 +396,7 @@ impl ToolCallFn for JoinParty<'_, '_> {
 pub struct InviteParty<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> InviteParty<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -456,7 +454,7 @@ impl ToolCallFn for InviteParty<'_, '_> {
 pub struct SendDirectMessage<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> SendDirectMessage<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -479,7 +477,8 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
             return "please provide a message to send to the user".to_string();
         };
         if message.chars().count() > 100 {
-            return "Message exceeds 100 characters, please shorten it and try again...".to_string();
+            return "Message exceeds 100 characters, please shorten it and try again..."
+                .to_string();
         }
         let message_state = self.1.messages.clone();
         let username = username.clone();
@@ -529,7 +528,11 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
 pub struct StopAgentLoop<'a>(std::sync::Arc<Mutex<bool>>, String, &'a Client);
 
 impl<'a> StopAgentLoop<'a> {
-    pub fn new(mutex: std::sync::Arc<Mutex<bool>>, username: String, client: &'a Client) -> Self {
+    pub const fn new(
+        mutex: std::sync::Arc<Mutex<bool>>,
+        username: String,
+        client: &'a Client,
+    ) -> Self {
         Self(mutex, username, client)
     }
 }
@@ -551,6 +554,7 @@ impl ToolCallFn for StopAgentLoop<'_> {
             .chat(format!("/msg {username} Stopping Agent Loop..."));
         let mut should_stop = should_stop.lock().await;
         *should_stop = true;
+        drop(should_stop);
         "stopped the agent loop".to_string()
     }
 
@@ -566,7 +570,7 @@ impl ToolCallFn for StopAgentLoop<'_> {
 pub struct GetInventory<'a>(&'a Client);
 
 impl<'a> GetInventory<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub const fn new(client: &'a Client) -> Self {
         Self(client)
     }
 }
@@ -586,22 +590,19 @@ impl ToolCallFn for GetInventory<'_> {
             && let Some(inventory) = self.0.open_inventory()
             && let Some(slots) = inventory.slots()
         {
-            slots
-                .iter()
-                .enumerate()
-                .fold(
-                    String::from("Current inventory:\n"),
-                    |mut acc, (idx, slot)| {
-                        let kind = slot.kind().to_string();
-                        _ = writeln!(
-                            &mut acc,
-                            "[index {}]: {}",
-                            idx,
-                            kind.split_once(':').map_or(kind.as_str(), |v| v.1)
-                        );
-                        acc
-                    },
-                )
+            slots.iter().enumerate().fold(
+                String::from("Current inventory:\n"),
+                |mut acc, (idx, slot)| {
+                    let kind = slot.kind().to_string();
+                    _ = writeln!(
+                        &mut acc,
+                        "[index {}]: {}",
+                        idx,
+                        kind.split_once(':').map_or(kind.as_str(), |v| v.1)
+                    );
+                    acc
+                },
+            )
         } else {
             "couldn't get inventory".to_string()
         }
@@ -619,7 +620,7 @@ impl ToolCallFn for GetInventory<'_> {
 pub struct SelectHotbarSlot<'a>(&'a Client);
 
 impl<'a> SelectHotbarSlot<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub const fn new(client: &'a Client) -> Self {
         Self(client)
     }
 }
@@ -662,7 +663,7 @@ impl ToolCallFn for SelectHotbarSlot<'_> {
 pub struct SendPartyMessage<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> SendPartyMessage<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -682,7 +683,8 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
             return "please provide a message to send to the party".to_string();
         };
         if message.chars().count() > 100 {
-            return "Message exceeds 100 characters, please shorten it and try again...".to_string();
+            return "Message exceeds 100 characters, please shorten it and try again..."
+                .to_string();
         }
         let past_messages = self.1.messages.clone();
         let mut response = String::new();
@@ -719,7 +721,7 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
 pub struct LeaveParty<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> LeaveParty<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -767,7 +769,7 @@ pub struct PartyInfo {
 }
 impl PartyInfo {
     #[must_use]
-    fn new(owner: String) -> Self {
+    const fn new(owner: String) -> Self {
         Self {
             owner,
             members: Vec::new(),
@@ -782,12 +784,12 @@ impl PartyInfo {
         self
     }
     #[must_use]
-    fn set_opened(mut self) -> Self {
+    const fn set_opened(mut self) -> Self {
         self.opened = true;
         self
     }
     #[must_use]
-    fn set_muted(mut self) -> Self {
+    const fn set_muted(mut self) -> Self {
         self.muted = true;
         self
     }
@@ -814,7 +816,7 @@ impl PartyInfo {
             info.owner, members, opened, muted
         )
     }
-    pub fn parse_party_info(input: &str) -> Option<PartyInfo> {
+    pub fn parse_party_info(input: &str) -> Option<Self> {
         let input = input.trim();
         let mut owner = None;
         let mut members: Vec<String> = Vec::new();
@@ -839,7 +841,7 @@ impl PartyInfo {
             }
         }
 
-        let mut info = PartyInfo::new(owner?);
+        let mut info = Self::new(owner?);
 
         if opened {
             info = info.set_opened();
@@ -860,7 +862,7 @@ impl PartyInfo {
 pub struct GetPartyInfo<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> GetPartyInfo<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -896,13 +898,16 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
                 _ = writeln!(&mut acc, "{v}");
                 acc
             });
-        if let Some(party_info) = p_info {
-            party_info.party_info_to_llm_text()
-        } else if past_messages.contains("Nessun party trovato!") {
-            "You are not in a party.".to_string()
-        } else {
-            format!("requested party info, check chat for details: \n\n{past_messages}")
-        }
+        p_info.map_or_else(
+            || {
+                if past_messages.contains("Nessun party trovato!") {
+                    "You are not in a party.".to_string()
+                } else {
+                    format!("requested party info, check chat for details: \n\n{past_messages}")
+                }
+            },
+            |party_info| party_info.party_info_to_llm_text(),
+        )
     }
 
     fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
@@ -913,7 +918,7 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
 pub struct AddFriend<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> AddFriend<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -966,7 +971,7 @@ impl ToolCallFn for AddFriend<'_, '_> {
 pub struct RemoveFriend<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> RemoveFriend<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -1042,7 +1047,7 @@ impl PlayerStats {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
-        let mut stats = PlayerStats::default();
+        let mut stats = Self::default();
 
         for line in lines {
             let line = line.as_ref().trim();
@@ -1160,7 +1165,7 @@ impl PlayerStats {
 pub struct GetStats<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> GetStats<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -1175,6 +1180,7 @@ impl ToolCallFn for GetStats<'_, '_> {
         "Retrieve detailed Bedwars player statistics for any player. This shows their performance metrics including level, wins, kills, K/D ratio, beds broken, and more.\n\nUse this when:\n- Checking your own stats\n- Viewing another player's stats to see their skill level\n- Comparing players\n- Seeing someone's winstreak or division\n\nNote: Returns a formatted summary of the player's stats. Filters out spam messages to find the stats data."
     }
 
+    #[allow(clippy::significant_drop_tightening)]
     async fn invoke(&self, args: &serde_json::Value) -> String {
         let Some(serde_json::Value::String(username)) = args.get("username") else {
             return "please provide a username string for whose stats to get".to_string();
@@ -1205,7 +1211,7 @@ impl ToolCallFn for GetStats<'_, '_> {
 pub struct GetNearbyBlocks<'a>(&'a Client);
 
 impl<'a> GetNearbyBlocks<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub const fn new(client: &'a Client) -> Self {
         Self(client)
     }
 }
@@ -1238,8 +1244,10 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
             .map(|v| format!("minecraft:{v}"));
 
         let bot_pos = self.0.position();
-        let mut response = match requested_block {
-            Some(ref block_type) => {
+        let mut response = requested_block.as_ref().map_or_else(||format!(
+                "Showing all nearby blocks in format:\n[x,y,z]: Block\nYour Current Position [{:.0},{:.0},{:.0}]:\n\n",
+                bot_pos.x, bot_pos.y, bot_pos.z
+            ), |block_type|{
                 let block_type = block_type
                     .split_once(':')
                     .map_or(block_type.as_str(), |v| v.1);
@@ -1247,14 +1255,9 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
                     "Showing nearby blocks of type {block_type} in format:\n[x,y,z]: Block\nYour Current Position [{:.0},{:.0},{:.0}]:\n\n",
                     bot_pos.x, bot_pos.y, bot_pos.z
                 )
-            }
-            None => format!(
-                "Showing all nearby blocks in format:\n[x,y,z]: Block\nYour Current Position [{:.0},{:.0},{:.0}]:\n\n",
-                bot_pos.x, bot_pos.y, bot_pos.z
-            ),
-        };
+            }) ;
 
-        let world = self.0.partial_world().clone();
+        let world = self.0.partial_world();
         let chunks = &world.read().chunks;
 
         let Some(chunks) = chunks.limited_get(&self.0.position().into()) else {
@@ -1299,6 +1302,7 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
                 }
             }
         }
+        drop(chunks);
 
         response
     }
@@ -1332,7 +1336,7 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
 pub struct PathFind<'a>(&'a Client);
 
 impl<'a> PathFind<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub const fn new(client: &'a Client) -> Self {
         Self(client)
     }
 }
@@ -1374,9 +1378,7 @@ impl ToolCallFn for PathFind<'_> {
                 .goto_with_opts(
                     BlockPosGoal(BlockPos::new(x, y, z)),
                     PathfinderOpts::new().allow_mining(false).max_timeout(
-                        azalea::pathfinder::astar::PathfinderTimeout::Time(
-                            Duration::from_secs(1),
-                        ),
+                        azalea::pathfinder::astar::PathfinderTimeout::Time(Duration::from_secs(1)),
                     ),
                 )
                 .await;
@@ -1459,7 +1461,7 @@ impl ToolCallFn for PathFind<'_> {
 pub struct GetCurrentPosition<'a>(&'a Client);
 
 impl<'a> GetCurrentPosition<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub const fn new(client: &'a Client) -> Self {
         Self(client)
     }
 }
@@ -1486,7 +1488,7 @@ impl ToolCallFn for GetCurrentPosition<'_> {
 pub struct NearbyBlockKinds<'a>(&'a Client);
 
 impl<'a> NearbyBlockKinds<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub const fn new(client: &'a Client) -> Self {
         Self(client)
     }
 }
@@ -1511,7 +1513,7 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
         let z_radius = radius("z_radius", 3);
         let x_radius = radius("x_radius", 5);
         let y_radius = radius("y_radius", 5);
-        let world = self.0.partial_world().clone();
+        let world = self.0.partial_world();
         let chunks = &world.read().chunks;
         let bot_pos = self.0.position();
 
@@ -1549,6 +1551,7 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
                 }
             }
         }
+        drop(chunks);
         found_blocks
     }
 
@@ -1576,7 +1579,7 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
 pub struct DeclineFriendRequest<'a>(&'a Client);
 
 impl<'a> DeclineFriendRequest<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub const fn new(client: &'a Client) -> Self {
         Self(client)
     }
 }
@@ -1609,7 +1612,7 @@ impl ToolCallFn for DeclineFriendRequest<'_> {
 pub struct AcceptFriendRequest<'a>(&'a Client);
 
 impl<'a> AcceptFriendRequest<'a> {
-    pub fn new(client: &'a Client) -> Self {
+    pub const fn new(client: &'a Client) -> Self {
         Self(client)
     }
 }
@@ -1643,7 +1646,7 @@ impl ToolCallFn for AcceptFriendRequest<'_> {
 pub struct RunCommand<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> RunCommand<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -1702,7 +1705,7 @@ impl ToolCallFn for RunCommand<'_, '_> {
 pub struct QuickCommand<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> QuickCommand<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -1773,7 +1776,7 @@ impl ToolCallFn for QuickCommand<'_, '_> {
 pub struct JoinGame<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> JoinGame<'a, 'b> {
-    pub fn new(client: &'a Client, state: &'b State) -> Self {
+    pub const fn new(client: &'a Client, state: &'b State) -> Self {
         Self(client, state)
     }
 }
@@ -1790,7 +1793,8 @@ impl ToolCallFn for JoinGame<'_, '_> {
 
     async fn invoke(&self, args: &serde_json::Value) -> String {
         let Some(serde_json::Value::String(username)) = args.get("username") else {
-            return "Please provide the username of the player whose game you want to join.".to_string();
+            return "Please provide the username of the player whose game you want to join."
+                .to_string();
         };
 
         let past_messages = self.1.messages.clone();

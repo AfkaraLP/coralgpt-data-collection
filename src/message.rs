@@ -43,7 +43,7 @@ impl Message {
     }
 
     #[must_use]
-    pub fn set_ping(mut self, ping: i64) -> Self {
+    pub const fn set_ping(mut self, ping: i64) -> Self {
         self.ping.replace(ping);
         self
     }
