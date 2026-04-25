@@ -63,51 +63,11 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                         location.eq(&BotLocation::BedwarsLobby)
                     };
                     if is_in_bedwars_lobby {
-                        tokio::spawn(async move {
-                            let mut interval = time::interval(Duration::from_secs(30));
-                            loop {
-                                interval.tick().await;
-                                bot.walk(azalea::WalkDirection::Backward);
-                                bot.jump();
-                                tokio::time::sleep(Duration::from_secs(3)).await;
-                                bot.walk(WalkDirection::BackwardLeft);
-                                tokio::time::sleep(Duration::from_millis(500)).await;
-                                bot.walk(WalkDirection::BackwardRight);
-                                tokio::time::sleep(Duration::from_secs(1)).await;
-                                bot.walk(WalkDirection::BackwardLeft);
-                                tokio::time::sleep(Duration::from_millis(500)).await;
-                                bot.walk(WalkDirection::None);
-
-                                let mut inventory: Option<ContainerHandle> = None;
-                                _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                                    if let Some(opened_inv) = bot.open_inventory() {
-                                        inventory.replace(opened_inv);
-                                    }
-                                }));
-
-                                if let Some(inventory) = inventory
-                                    && let Some(slots) = inventory.slots()
-                                    && !slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
-                                    && !bot.tab_list().into_iter().any(|entry| {
-                                        entry
-                                            .1
-                                            .display_name
-                                            .unwrap_or_default()
-                                            .to_string()
-                                            .to_lowercase()
-                                            .contains(
-                                                ENV_VARS
-                                                    .bot_clan_name
-                                                    .as_deref()
-                                                    .unwrap_or("<UNK>"),
-                                            )
-                                    })
-                                {
-                                    bot.chat("/hub");
-                                    join_bedwars_lobby(&bot).await;
-                                }
-                            }
-                        });
+                        let task =
+                            tokio::task::spawn(
+                                async move { try_stay_in_bedwars_lobby(&bot).await },
+                            );
+                        state.stay_in_bedawrs_task.lock().await.replace(task);
                         break eprintln!("successfully joined the bedwars lobby...");
                     }
 
@@ -142,6 +102,47 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
     }
 
     Ok(())
+}
+
+async fn try_stay_in_bedwars_lobby(bot: &Client) {
+    let mut interval = time::interval(Duration::from_secs(30));
+    loop {
+        interval.tick().await;
+        bot.walk(azalea::WalkDirection::Backward);
+        bot.jump();
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        bot.walk(WalkDirection::BackwardLeft);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        bot.walk(WalkDirection::BackwardRight);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        bot.walk(WalkDirection::BackwardLeft);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        bot.walk(WalkDirection::None);
+
+        let mut inventory: Option<ContainerHandle> = None;
+        _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            if let Some(opened_inv) = bot.open_inventory() {
+                inventory.replace(opened_inv);
+            }
+        }));
+
+        if let Some(inventory) = inventory
+            && let Some(slots) = inventory.slots()
+            && !slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
+            && !bot.tab_list().into_iter().any(|entry| {
+                entry
+                    .1
+                    .display_name
+                    .unwrap_or_default()
+                    .to_string()
+                    .to_lowercase()
+                    .contains(ENV_VARS.bot_clan_name.as_deref().unwrap_or("<UNK>"))
+            })
+        {
+            bot.chat("/hub");
+            join_bedwars_lobby(bot).await;
+        }
+    }
 }
 
 static DM_MSG_REGEX: LazyLock<Regex> =

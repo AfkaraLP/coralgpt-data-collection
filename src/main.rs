@@ -77,6 +77,7 @@ pub struct State {
     pub messages: Arc<Mutex<FifoBuffer<1000, FormattedText>>>,
     pub broadcaster: Option<Arc<Broadcaster>>,
     pub bot_activity_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    pub stay_in_bedawrs_task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl State {
