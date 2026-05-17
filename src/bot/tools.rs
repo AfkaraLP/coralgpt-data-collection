@@ -6,7 +6,7 @@ use azalea::{
     pathfinder::{PathfinderOpts, goals::BlockPosGoal},
     prelude::PathfinderClientExt,
 };
-use openai_client::{ChatCompletionMessageParam, ToolCallArgDescriptor, ToolCallFn, ToolMap};
+use openai_client::{ChatCompletionMessageParam, ToolCallArg, ToolCallFn, ToolMap};
 use std::{fmt::Write, time::Duration};
 use tokio::{
     sync::Mutex,
@@ -68,8 +68,8 @@ impl ToolCallFn for SpawnSubAgent<'_> {
         agent_loop.await
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "task",
             "A detailed description of the task you want the subagent to complete. Be specific about what success looks like. The subagent will keep running until it completes the task or determines it cannot be done.\n\nExample: \"Go to coordinates [100, 64, 200], search for a diamond ore block within 10 blocks, and tell me what you found\"",
         )]
@@ -98,8 +98,8 @@ impl ToolCallFn for SendChatMessage<'_, '_> {
         "Send a text message to the global/public chat visible to all players in the current lobby. This is the main way to communicate with anyone in the game.\n\nUse this when:\n- Responding to public questions\n- Starting a conversation in global chat\n- Making public announcements\n- Talking to strangers\n\nNote: Messages are limited to 100 characters. The tool returns the past 8 chat messages to help you see the context of your message."
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "message",
             "The text message to send to global chat. Must be 100 characters or less. This appears publicly to all players in the lobby.\n\nExample: \"Hey everyone! Looking for a duo game\"",
         )]
@@ -153,8 +153,8 @@ impl ToolCallFn for RespondToUser<'_, '_, '_> {
         "Send a private message (DM) directly to a specific player. This is a private, one-on-one conversation that only the recipient can see.\n\nUse this when:\n- Someone messages you privately and you want to reply\n- You want to have a private conversation without others seeing\n- Responding to /msg commands from other players\n- Sending sensitive information you don't want others to see\n\nNote: Limited to 100 characters. Returns the past 5 messages to see your message in context."
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "message",
             "The private message to send to the specific player. This goes directly to them via /msg. Max 100 characters.\n\nExample: \"Sure, I'll join your party!\"",
         )]
@@ -208,20 +208,20 @@ impl ToolCallFn for ReadTabList<'_> {
         "Retrieve the list of all players currently in the same lobby/server as you. The tab list typically shows player names along with their rank, guild tag, and other metadata.\n\nUse this when:\n- Checking who is online in your lobby\n- Looking for specific players to invite to party/games\n- Seeing if friends are online\n- Checking for potential teammates or opponents\n\nNote: This only shows players in your current server/lobby, not the entire network."
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         Vec::new()
     }
 
     async fn invoke(&self, _args: &serde_json::Value) -> String {
-        self.0
-            .tab_list()
-            .values()
-            .fold(String::new(), |mut acc, val| {
-                if let Some(name) = &val.display_name {
-                    _ = writeln!(&mut acc, "{name}");
-                }
-                acc
-            })
+        let Ok(tab_list) = self.0.tab_list() else {
+            return "failed to get tablist".into();
+        };
+        tab_list.values().fold(String::new(), |mut acc, val| {
+            if let Some(name) = &val.display_name {
+                _ = writeln!(&mut acc, "{name}");
+            }
+            acc
+        })
     }
 }
 
@@ -243,13 +243,13 @@ impl ToolCallFn for ReadChatHistory<'_> {
         "Retrieve recent messages from the chat history. This allows you to see what has been said recently, including public messages, private messages sent to you, system announcements, and join/leave messages.\n\nUse this when:\n- Reviewing recent conversations to understand context\n- Checking if someone responded to you\n- Seeing what happened while you were away\n- Finding specific information someone said earlier\n\nTip: Use the 'verbose' parameter to include spam messages like server announcements and join/leave messages. Try to request only as many messages as you need to avoid filling up context too quickly."
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         vec![
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "count",
                 "The number of past messages to retrieve. This determines how far back in chat history to look. Higher values give more context but use more tokens. Recommended: 5-20 for most situations.\n\nExample: 10 (get the 10 most recent messages)",
             ),
-            ToolCallArgDescriptor::bool(
+            ToolCallArg::bool(
                 "verbose",
                 "When set to true, includes all messages including server announcements, join/leave messages, and other spam. When false (default), filters out spam messages to show only meaningful player messages.\n\nExample: false to see only player chat, true to see everything",
             ),
@@ -331,8 +331,8 @@ impl ToolCallFn for Sleep<'_> {
         }
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::number(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::number(
             "time",
             "The duration to sleep in seconds. This is an unsigned integer representing how long to wait.\n\nExample: 5 (wait for 5 seconds), 10 (wait for 10 seconds)\n\nTip: 1-3 seconds is usually enough for chat to update, 5-10 seconds for waiting for party/game actions.",
         )]
@@ -386,8 +386,8 @@ impl ToolCallFn for JoinParty<'_, '_> {
         }
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "username",
             "The username of the player whose party you want to join. This player must have either invited you or have an open/public party.\n\nExample: \"Player123\" (join Player123's party)\n\nTip: You can check who is in the lobby with read_tab_list to find players with open parties.",
         )]
@@ -443,8 +443,8 @@ impl ToolCallFn for InviteParty<'_, '_> {
         }
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "username",
             "The username of the player you want to invite to your party. The player must be online for the invite to work.\n\nExample: \"FriendPlayer\" (invite FriendPlayer to join your party)\n\nTip: Check if the player is online using read_tab_list first.",
         )]
@@ -508,16 +508,16 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
             acc
         });
 
-        format!("Sent direct message, past 10 chat messages: {past_messages}",)
+        format!("Sent direct message, past 10 chat messages: {past_messages}")
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         vec![
-            ToolCallArgDescriptor::string(
+            ToolCallArg::string(
                 "username",
                 "The username of the player to send the direct message to. The player must be online for the message to go through.\n\nExample: \"PlayerName\"",
             ),
-            ToolCallArgDescriptor::string(
+            ToolCallArg::string(
                 "message",
                 "The private message content to send. Max 100 characters. This goes directly to the player's inbox.\n\nExample: \"Hey, want to play duo?\"",
             ),
@@ -558,7 +558,7 @@ impl ToolCallFn for StopAgentLoop<'_> {
         "stopped the agent loop".to_string()
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         Vec::new()
     }
 
@@ -587,7 +587,7 @@ impl ToolCallFn for GetInventory<'_> {
 
     async fn invoke(&self, _args: &serde_json::Value) -> String {
         if self.0.exists()
-            && let Some(inventory) = self.0.open_inventory()
+            && let Ok(Some(inventory)) = self.0.open_inventory()
             && let Some(slots) = inventory.slots()
         {
             slots.iter().enumerate().fold(
@@ -608,7 +608,7 @@ impl ToolCallFn for GetInventory<'_> {
         }
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         Vec::new()
     }
 
@@ -648,8 +648,8 @@ impl ToolCallFn for SelectHotbarSlot<'_> {
         format!("selected hotbar slot {number}")
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::number(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::number(
             "index",
             "The hotbar slot index to select (0-8). 0 is the first slot on the left, 8 is the last on the right. The value wraps around (9 becomes 0, 10 becomes 1, etc.).\n\nExample: 0 (select the leftmost slot), 4 (select the middle slot)\n\nTip: Use get_inventory first to see what items are in each slot.",
         )]
@@ -706,8 +706,8 @@ impl ToolCallFn for SendPartyMessage<'_, '_> {
         response
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "message",
             "The message to send to your party members. This is private and only party members can see it. Max 100 characters.\n\nExample: \"Let's go to mid!\"",
         )]
@@ -756,7 +756,7 @@ impl ToolCallFn for LeaveParty<'_, '_> {
         }
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         Vec::new()
     }
 }
@@ -910,7 +910,7 @@ impl ToolCallFn for GetPartyInfo<'_, '_> {
         )
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         Vec::new()
     }
 }
@@ -960,8 +960,8 @@ impl ToolCallFn for AddFriend<'_, '_> {
         }
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "username",
             "The username of the player to send a friend request to. The player doesn't need to be online to send the request.\n\nExample: \"CoolPlayer123\"",
         )]
@@ -1012,8 +1012,8 @@ impl ToolCallFn for RemoveFriend<'_, '_> {
         }
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "username",
             "The username of the player to remove from your friends list.\n\nExample: \"ExFriend123\"",
         )]
@@ -1200,8 +1200,8 @@ impl ToolCallFn for GetStats<'_, '_> {
         format!("{username}'s stats: {stats_text}")
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "username",
             "The username of the player whose stats you want to view. Can be your own username or another player's.\n\nExample: \"YourUsername\" (check your own stats), \"ProPlayer123\" (check someone else's)",
         )]
@@ -1243,7 +1243,9 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
             .filter(|v| !v.is_empty())
             .map(|v| format!("minecraft:{v}"));
 
-        let bot_pos = self.0.position();
+        let Ok(bot_pos) = self.0.position() else {
+            return "Failed to get bot position".into();
+        };
         let mut response = requested_block.as_ref().map_or_else(||format!(
                 "Showing all nearby blocks in format:\n[x,y,z]: Block\nYour Current Position [{:.0},{:.0},{:.0}]:\n\n",
                 bot_pos.x, bot_pos.y, bot_pos.z
@@ -1257,10 +1259,12 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
                 )
             }) ;
 
-        let world = self.0.partial_world();
+        let Ok(world) = self.0.partial_world() else {
+            return "Failed to get world.".into();
+        };
         let chunks = &world.read().chunks;
 
-        let Some(chunks) = chunks.limited_get(&self.0.position().into()) else {
+        let Some(chunks) = chunks.limited_get(&bot_pos.into()) else {
             return "failed to get nearby chunks".to_string();
         };
 
@@ -1307,21 +1311,21 @@ impl ToolCallFn for GetNearbyBlocks<'_> {
         response
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         vec![
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "z_radius",
                 "How far in the Z axis (north/south) to scan for blocks. Default is 3. Positive and negative values scan in both directions from your position.\n\nExample: 5 (scan 5 blocks in each Z direction)",
             ),
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "x_radius",
                 "How far in the X axis (east/west) to scan for blocks. Default is 5. Scans in both directions from your position.\n\nExample: 10 (scan 10 blocks in each X direction)",
             ),
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "y_radius",
                 "How far in the Y axis (up/down) to scan for blocks. Default is 5. Scans both above and below your position.\n\nExample: 3 (scan 3 blocks up and down)",
             ),
-            ToolCallArgDescriptor::string(
+            ToolCallArg::string(
                 "block_type",
                 "Filter to only show a specific type of block. Use Minecraft block names in lowercase with underscores. If not provided, shows all non-air blocks in range.\n\nExample values: \"oak_log\", \"diamond_ore\", \"glass\", \"stone\", \"cobblestone\"\n\nTip: Use this to quickly find specific resources like 'diamond_ore' or 'gold_ore'",
             ),
@@ -1399,7 +1403,9 @@ impl ToolCallFn for PathFind<'_> {
         let start = Instant::now();
 
         let response = loop {
-            let bot_position = bot.position();
+            let Ok(bot_position) = bot.position() else {
+                break "Failed to get bot position".into();
+            };
             let dist = bot_position.distance_to(Vec3 {
                 x: f64::from(x),
                 y: f64::from(y),
@@ -1433,21 +1439,21 @@ impl ToolCallFn for PathFind<'_> {
         response
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         vec![
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "x",
                 "The X coordinate (east-west axis) of the target position to pathfind to. This is a signed integer.\n\nExample: 100 (move to x=100)",
             ),
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "y",
                 "The Y coordinate (vertical axis) of the target position. This is the height/elevation. Must be a valid block position.\n\nExample: 64 (move to y=64, typical ground level)",
             ),
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "z",
                 "The Z coordinate (north-south axis) of the target position to pathfind to. This is a signed integer.\n\nExample: -50 (move to z=-50)",
             ),
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "time_to_reach_goal",
                 "Maximum time in seconds to spend trying to reach the destination before giving up. Default is 10 seconds. Increase for longer distances.\n\nExample: 30 (give up after 30 seconds if not reached)",
             ),
@@ -1477,10 +1483,13 @@ impl ToolCallFn for GetCurrentPosition<'_> {
     }
 
     async fn invoke(&self, _args: &serde_json::Value) -> String {
-        format!("current position: {}", self.0.position())
+        let Ok(position) = self.0.position() else {
+            return "Failed to get your position.".into();
+        };
+        format!("current position: {position}")
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         Vec::new()
     }
 }
@@ -1513,11 +1522,15 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
         let z_radius = radius("z_radius", 3);
         let x_radius = radius("x_radius", 5);
         let y_radius = radius("y_radius", 5);
-        let world = self.0.partial_world();
+        let Ok(world) = self.0.partial_world() else {
+            return "Failed to get world data.".into();
+        };
         let chunks = &world.read().chunks;
-        let bot_pos = self.0.position();
+        let Ok(bot_pos) = self.0.position() else {
+            return "Failed to get your position.".into();
+        };
 
-        let Some(chunks) = chunks.limited_get(&self.0.position().into()) else {
+        let Some(chunks) = chunks.limited_get(&bot_pos.into()) else {
             return "failed to get nearby chunks".to_string();
         };
 
@@ -1555,17 +1568,17 @@ impl ToolCallFn for NearbyBlockKinds<'_> {
         found_blocks
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         vec![
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "z_radius",
                 "How far in the Z axis (north/south) to scan. Default is 3. Scans in both directions.\n\nExample: 5",
             ),
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "x_radius",
                 "How far in the X axis (east/west) to scan. Default is 5. Scans in both directions.\n\nExample: 10",
             ),
-            ToolCallArgDescriptor::number(
+            ToolCallArg::number(
                 "y_radius",
                 "How far in the Y axis (up/down) to scan. Default is 5. Scans both above and below.\n\nExample: 3",
             ),
@@ -1602,8 +1615,8 @@ impl ToolCallFn for DeclineFriendRequest<'_> {
         format!("declined friend request by {username}")
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "username",
             "The username of the player whose friend request you want to decline.\n\nExample: \"UnknownPlayer\"",
         )]
@@ -1635,8 +1648,8 @@ impl ToolCallFn for AcceptFriendRequest<'_> {
         format!("accepted friend request by {username}")
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "username",
             "The username of the player whose friend request you want to accept.\n\nExample: \"NewFriend123\"",
         )]
@@ -1688,13 +1701,13 @@ impl ToolCallFn for RunCommand<'_, '_> {
         }
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
+    fn get_args(&self) -> Vec<ToolCallArg> {
         vec![
-            ToolCallArgDescriptor::string(
+            ToolCallArg::string(
                 "command",
                 "The main command category to run (without the slash). This is the command name.\n\nExample: \"warp\", \"spawn\", \"shop\", \"help\"",
             ),
-            ToolCallArgDescriptor::string(
+            ToolCallArg::string(
                 "args",
                 "Additional arguments to pass to the command. This is everything after the command name.\n\nExample: \"nether\" (to run /warp nether), \"playerName\" (to run /stats playerName)\n\nLeave empty if the command takes no arguments.",
             ),
@@ -1765,8 +1778,8 @@ impl ToolCallFn for QuickCommand<'_, '_> {
         response
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "command",
             "The quick command to run. Choose from:\n\n- \"spawn\": Teleport to the lobby spawn location\n- \"playtwo\": Join a duo (2-player) game\n- \"playthree\": Join a trio (3-player) game  \n- \"stats\": View your own Bedwars stats\n- \"ping\": Check your current network latency\n\nExample: \"spawn\" (go to lobby), \"playtwo\" (join duo game)",
         )]
@@ -1815,8 +1828,8 @@ impl ToolCallFn for JoinGame<'_, '_> {
         }
     }
 
-    fn get_args(&self) -> Vec<ToolCallArgDescriptor> {
-        vec![ToolCallArgDescriptor::string(
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        vec![ToolCallArg::string(
             "username",
             "The username of the player whose private game you want to join. They must currently be in a private game for this to work.\n\nExample: \"GameHost123\"",
         )]

@@ -1,11 +1,10 @@
 pub mod tools;
 
 use std::fmt::Write;
-use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use azalea::container::ContainerHandle;
+use azalea::client_chat::ChatPacket;
 use azalea::{
     WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
     registry::builtin::ItemKind,
@@ -71,14 +70,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                         break eprintln!("successfully joined the bedwars lobby...");
                     }
 
-                    let mut inventory: Option<ContainerHandle> = None;
-                    _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        if let Some(opened_inv) = bot.open_inventory() {
-                            inventory.replace(opened_inv);
-                        }
-                    }));
-
-                    if let Some(inventory) = inventory
+                    if let Ok(Some(inventory)) = bot.open_inventory()
                         && let Some(slots) = inventory.slots()
                         && slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
                     {
@@ -119,17 +111,11 @@ async fn try_stay_in_bedwars_lobby(bot: &Client) {
         tokio::time::sleep(Duration::from_millis(500)).await;
         bot.walk(WalkDirection::None);
 
-        let mut inventory: Option<ContainerHandle> = None;
-        _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            if let Some(opened_inv) = bot.open_inventory() {
-                inventory.replace(opened_inv);
-            }
-        }));
-
-        if let Some(inventory) = inventory
+        if let Ok(Some(inventory)) = bot.open_inventory()
             && let Some(slots) = inventory.slots()
             && !slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
-            && !bot.tab_list().into_iter().any(|entry| {
+            && let Ok(tab_list) = bot.tab_list()
+            && !tab_list.into_iter().any(|entry| {
                 entry
                     .1
                     .display_name
@@ -208,10 +194,12 @@ async fn handle_instruction(bot: &Client, state: &State) {
             Instruction::Jump => bot.jump(),
             Instruction::TabList(sender) => send_tab_list(bot, sender).await,
             Instruction::Walk(direction) => bot.walk(direction),
-            Instruction::Sneak(sneaking) => bot.set_crouching(sneaking),
+            Instruction::Sneak(sneaking) => _ = bot.set_crouching(sneaking),
             Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
             Instruction::GetSlot(sender) => {
-                let _ = sender.send(bot.selected_hotbar_slot()).await;
+                let _ = sender
+                    .send(bot.selected_hotbar_slot().unwrap_or_default())
+                    .await;
             }
             Instruction::Agent(prompt) => {
                 handle_agent_instruction(bot, state, &prompt, &ENV_VARS.username).await;
@@ -222,7 +210,7 @@ async fn handle_instruction(bot: &Client, state: &State) {
 
 async fn send_tab_list(bot: &Client, sender: Sender<String>) {
     let mut players = String::new();
-    for (_, player) in bot.tab_list() {
+    for (_, player) in bot.tab_list().unwrap_or_default() {
         _ = writeln!(
             &mut players,
             "{}",
@@ -243,7 +231,7 @@ async fn join_bedwars_lobby(bot: &Client) {
     bot.right_click();
     tokio::time::sleep(Duration::from_secs(1)).await;
     bot.wait_updates(1).await;
-    if let Some(container) = bot.wait_for_container_open(Some(400)).await
+    if let Ok(Some(container)) = bot.wait_for_container_open(Some(400)).await
         && let Some(slots) = container.slots()
     {
         let Some(bed_idx) = slots
@@ -265,7 +253,7 @@ async fn join_bedwars_lobby(bot: &Client) {
 static DM_PARSE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(Da (\w+)\) (.*)").unwrap());
 
-async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, state: &State) {
+async fn handle_message_event(bot: &Client, message: ChatPacket, state: &State) {
     println!("{}", message.message().to_ansi());
     handle_register_login(bot, &message, state).await;
     {
@@ -296,8 +284,9 @@ async fn handle_message_event(bot: &Client, message: azalea::chat::ChatPacket, s
         && let Some(conn) = state.conn.lock().await.as_ref()
     {
         let username = message.name.as_str();
-        if let Some(player_uuid) = bot.player_uuid_by_username(username)
-            && let Some(player) = bot.tab_list().get(&player_uuid)
+        if let Ok(Some(player_uuid)) = bot.player_uuid_by_username(username)
+            && let Ok(tab_list) = bot.tab_list()
+            && let Some(player) = tab_list.get(&player_uuid)
         {
             message = message.set_ping(player.latency.into());
         }
@@ -323,7 +312,7 @@ async fn notify_roby_join() {
     }
 }
 
-async fn handle_register_login(bot: &Client, message: &azalea::chat::ChatPacket, state: &State) {
+async fn handle_register_login(bot: &Client, message: &ChatPacket, state: &State) {
     let pwd = &ENV_VARS.password;
     if message
         .message()
