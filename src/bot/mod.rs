@@ -231,23 +231,23 @@ async fn join_bedwars_lobby(bot: &Client) {
     bot.right_click();
     tokio::time::sleep(Duration::from_secs(1)).await;
     bot.wait_updates(1).await;
-    if let Ok(Some(container)) = bot.wait_for_container_open(Some(400)).await
-        && let Some(slots) = container.slots()
-    {
-        let Some(bed_idx) = slots
-            .iter()
-            .enumerate()
-            .find(|(_idx, item)| item.kind().eq(&ItemKind::RedBed))
-            .map(|v| v.0)
-        else {
-            return eprintln!("couldn't get the bed idx");
-        };
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        container.left_click(bed_idx);
-        bot.set_selected_hotbar_slot(3);
-    } else {
-        eprintln!("failed to get open container...");
-    }
+    let Ok(Some(container)) = bot.wait_for_container_open(Some(400)).await else {
+        return eprintln!("failed to get open container...");
+    };
+    let Some(slots) = container.slots() else {
+        return eprintln!("failed to get container slots...");
+    };
+    let Some(bed_idx) = slots
+        .iter()
+        .enumerate()
+        .find(|(_idx, item)| item.kind().eq(&ItemKind::RedBed))
+        .map(|v| v.0)
+    else {
+        return eprintln!("couldn't get the bed idx");
+    };
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    container.left_click(bed_idx);
+    bot.set_selected_hotbar_slot(3);
 }
 
 static DM_PARSE_REGEX: LazyLock<Regex> =
