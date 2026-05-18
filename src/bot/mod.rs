@@ -234,15 +234,20 @@ async fn join_bedwars_lobby(bot: &Client) {
     let Ok(Some(container)) = bot.wait_for_container_open(Some(400)).await else {
         return eprintln!("failed to get open container...");
     };
+    tokio::time::sleep(Duration::from_secs(1)).await;
     let Some(slots) = container.slots() else {
         return eprintln!("failed to get container slots...");
     };
+    tokio::time::sleep(Duration::from_secs(1)).await;
     let Some(bed_idx) = slots
         .iter()
         .enumerate()
         .find(|(_idx, item)| item.kind().eq(&ItemKind::RedBed))
         .map(|v| v.0)
     else {
+        for (idx, slot) in slots.iter().enumerate() {
+            eprintln!("got item: {:#?} [{idx}]", slot.kind());
+        }
         return eprintln!("couldn't get the bed idx");
     };
     tokio::time::sleep(Duration::from_secs(1)).await;
