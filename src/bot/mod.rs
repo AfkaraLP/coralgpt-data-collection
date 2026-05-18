@@ -242,7 +242,7 @@ async fn join_bedwars_lobby(bot: &Client) {
     let Some(bed_idx) = slots
         .iter()
         .enumerate()
-        .find(|(_idx, item)| item.kind().eq(&ItemKind::RedBed))
+        .find(|(_idx, item)| item.kind().eq(&ItemKind::BlueBed))
         .map(|v| v.0)
     else {
         for (idx, slot) in slots.iter().enumerate() {
