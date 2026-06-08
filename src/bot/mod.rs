@@ -4,13 +4,17 @@ use std::fmt::Write;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use azalea::BlockPos;
 use azalea::client_chat::ChatPacket;
+use azalea::pathfinder::PathfinderOpts;
+use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::{
     WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
     registry::builtin::ItemKind,
 };
 use openai_client::OpenAIClient;
 use regex::Regex;
+use tokio::time::{sleep, timeout};
 use tokio::{sync::mpsc::Sender, time};
 
 use crate::ENV_VARS;
@@ -77,7 +81,9 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                         let mut location = state.location.lock().await;
                         *location = BotLocation::BedwarsLobby;
                     }
-                    if state.location.lock().await.eq(&BotLocation::Lobby) {
+                    if state.location.lock().await.eq(&BotLocation::Lobby)
+                        && !*state.banned.lock().await
+                    {
                         join_bedwars_lobby(&bot).await;
                     }
                 }
@@ -89,11 +95,54 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
         }
         Event::Tick => {
             handle_instruction(&bot, &state).await;
+            if *state.banned.lock().await {
+                let mut activity = state.banned_task.lock().await;
+                *state.stay_in_bedawrs_task.lock().await = None;
+                *state.bot_activity_task.lock().await = None;
+                if activity.is_none() {
+                    activity.replace(tokio::task::spawn(
+                        async move { do_banned_mining(&bot).await },
+                    ));
+                }
+            }
         }
         _ => {}
     }
 
     Ok(())
+}
+
+async fn do_banned_mining(bot: &Client) {
+    eprintln!("Pathfinding...");
+    loop {
+        let first_pos = BlockPos::new(-34, 95, 55);
+        bot.goto_with_opts(
+            BlockPosGoal(first_pos),
+            PathfinderOpts::new()
+                .allow_mining(false)
+                .max_timeout(Duration::from_secs(30)),
+        )
+        .await;
+        for x in -34..=34 {
+            let range: Vec<i32> = if x % 2 == 0 {
+                (55..=123).collect()
+            } else {
+                (55..=123).rev().collect()
+            };
+            for z in range {
+                let y = 94;
+                let pathfindpos = BlockPos::new(x, y, z);
+                bot.goto_with_opts(
+                    BlockPosGoal(pathfindpos),
+                    PathfinderOpts::new()
+                        .allow_mining(true)
+                        .max_timeout(Duration::from_secs(2)),
+                )
+                .await;
+                // sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
 }
 
 async fn try_stay_in_bedwars_lobby(bot: &Client) {
@@ -186,8 +235,9 @@ async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str, use
 
 async fn handle_instruction(bot: &Client, state: &State) {
     let mut guard = state.recv_instruction.lock().await;
+
     if let Some(recv) = guard.as_mut()
-        && let Some(instruction) = recv.recv().await
+        && let Ok(Some(instruction)) = timeout(Duration::from_secs(1), recv.recv()).await
     {
         match instruction {
             Instruction::Chat(message) => bot.chat(message),
@@ -224,6 +274,7 @@ async fn send_tab_list(bot: &Client, sender: Sender<String>) {
 }
 
 async fn join_bedwars_lobby(bot: &Client) {
+    eprintln!("Joining bedwars lobby...");
     bot.set_selected_hotbar_slot(4);
     tokio::time::sleep(Duration::from_secs(1)).await;
     bot.wait_updates(1).await;
@@ -261,6 +312,13 @@ static DM_PARSE_REGEX: LazyLock<Regex> =
 async fn handle_message_event(bot: &Client, message: ChatPacket, state: &State) {
     println!("{}", message.message().to_ansi());
     handle_register_login(bot, &message, state).await;
+    if message.content().contains("SEI STATO BANNATO!") {
+        let mut banned = state.banned.lock().await;
+        eprintln!("Bot is banned...");
+        *banned = true;
+        drop(banned);
+        eprintln!("Bot is bannet set to {}", *state.banned.lock().await);
+    }
     {
         let mut messages = state.messages.lock().await;
         messages.push(message.message());
