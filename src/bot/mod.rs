@@ -70,7 +70,9 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                             tokio::task::spawn(
                                 async move { try_stay_in_bedwars_lobby(&bot).await },
                             );
-                        state.stay_in_bedawrs_task.lock().await.replace(task);
+                        if let Some(old) = state.stay_in_bedawrs_task.lock().await.replace(task) {
+                            old.abort();
+                        }
                         break eprintln!("successfully joined the bedwars lobby...");
                     }
 
@@ -88,7 +90,9 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
                     }
                 }
             });
-            state.bot_activity_task.lock().await.replace(task);
+            if let Some(old) = state.bot_activity_task.lock().await.replace(task) {
+                old.abort();
+            }
         }
         Event::Chat(message) => {
             handle_message_event(&bot, message, &state).await;
@@ -96,9 +100,15 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
         Event::Tick => {
             handle_instruction(&bot, &state).await;
             if *state.banned.lock().await {
-                let mut activity = state.banned_task.lock().await;
+                if let Some(handle) = state.stay_in_bedawrs_task.lock().await.as_ref() {
+                    handle.abort();
+                }
+                if let Some(handle) = state.bot_activity_task.lock().await.as_ref() {
+                    handle.abort();
+                }
                 *state.stay_in_bedawrs_task.lock().await = None;
                 *state.bot_activity_task.lock().await = None;
+                let mut activity = state.banned_task.lock().await;
                 if activity.is_none() {
                     activity.replace(tokio::task::spawn(
                         async move { do_banned_mining(&bot).await },
