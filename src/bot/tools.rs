@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use azalea::{
     BlockPos, Client, Vec3,
+    block::BlockState,
     pathfinder::{PathfinderOpts, goals::BlockPosGoal},
     prelude::PathfinderClientExt,
 };
@@ -1213,7 +1214,7 @@ impl ToolCallFn for PathFind<'_> {
         let Some(x) = arg_to_i32(args, "x") else {
             return "Please provie a valid x position in the arguments".to_string();
         };
-        let Some(y) = arg_to_i32(args, "y") else {
+        let Some(mut y) = arg_to_i32(args, "y") else {
             return "Please provie a valid y position in the arguments".to_string();
         };
         let Some(z) = arg_to_i32(args, "z") else {
@@ -1225,6 +1226,24 @@ impl ToolCallFn for PathFind<'_> {
             .unwrap_or(10);
         let bot = self.0.clone();
         let goto_bot = bot.clone();
+        let Ok(world) = bot.world() else {
+            return "Failed getting world data...".to_string();
+        };
+
+        // TODO: I hate this, replace with explicit drop when new lifetime system *drops*... gettit?
+        {
+            let world = world.read();
+            while matches!(
+                world.get_block_state(BlockPos { x, y, z }),
+                Some(state) if state != BlockState::AIR
+            ) {
+                y += 1;
+            }
+        }
+
+        // TODO: since we are making sure to actually pathfind to something
+        // the bot can stand on, we don't have to do this tomfoolery with
+        // seperate seeking and polling thread to see if we reached the destination
         let goto_thread = tokio::spawn(async move {
             goto_bot
                 .goto_with_opts(
@@ -1606,7 +1625,7 @@ impl ToolCallFn for QuickCommand<'_, '_> {
                 self.0.chat("/ping");
                 "executed ping command."
             }
-            _ => return format!("command \"{command}\" does not exist"),
+            _ => return format!("quick command \"{command}\" does not exist"),
         };
         let past_messages = self.1.messages.clone();
         let mut response = String::from(exc_comm);

@@ -83,7 +83,7 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
 
                     loop {
                         interval.tick().await;
-                        let is_in_bedwars_lobby = {
+                        let is_in_bedwars_lobby: bool = {
                             let location = state.location.lock().await;
                             location.eq(&BotLocation::BedwarsLobby)
                         };
@@ -239,7 +239,8 @@ async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str, use
         let tools_map = ToolMap::new()
             .register_tool(RespondToUser::new(bot, username, state))
             .register_tool(SpawnSubAgent::new(&subagent_tools));
-        let mut system_prompt = format!("{SYSTEM_PROMPT}\n\n## Available tools for the Agent:\n\n");
+        let mut system_prompt =
+            format!("{SYSTEM_PROMPT}\n\n## Available tools for the Subagent:\n\n");
         for tool in subagent_tools.values() {
             _ = writeln!(
                 &mut system_prompt,
@@ -256,24 +257,25 @@ async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str, use
 async fn handle_instruction(bot: &Client, state: &State) {
     let mut guard = state.recv_instruction.lock().await;
 
-    if let Some(recv) = guard.as_mut()
-        && let Ok(Some(instruction)) = timeout(Duration::from_secs(1), recv.recv()).await
-    {
-        match instruction {
-            Instruction::Chat(message) => bot.chat(message),
-            Instruction::Jump => bot.jump(),
-            Instruction::TabList(sender) => send_tab_list(bot, sender).await,
-            Instruction::Walk(direction) => bot.walk(direction),
-            Instruction::Sneak(sneaking) => _ = bot.set_crouching(sneaking),
-            Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
-            Instruction::GetSlot(sender) => {
-                let _ = sender
-                    .send(bot.selected_hotbar_slot().unwrap_or_default())
-                    .await;
-            }
-            Instruction::Agent(prompt) => {
-                handle_agent_instruction(bot, state, &prompt, &ENV_VARS.username).await;
-            }
+    let Some(recv) = guard.as_mut() else { return };
+    let Ok(Some(instruction)) = timeout(Duration::from_secs(1), recv.recv()).await else {
+        return;
+    };
+
+    match instruction {
+        Instruction::Chat(message) => bot.chat(message),
+        Instruction::Jump => bot.jump(),
+        Instruction::TabList(sender) => send_tab_list(bot, sender).await,
+        Instruction::Walk(direction) => bot.walk(direction),
+        Instruction::Sneak(sneaking) => _ = bot.set_crouching(sneaking),
+        Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
+        Instruction::GetSlot(sender) => {
+            _ = sender
+                .send(bot.selected_hotbar_slot().unwrap_or_default())
+                .await;
+        }
+        Instruction::Agent(prompt) => {
+            handle_agent_instruction(bot, state, &prompt, &ENV_VARS.username).await;
         }
     }
 }
@@ -287,9 +289,8 @@ async fn send_tab_list(bot: &Client, sender: Sender<String>) {
             player.display_name.unwrap_or_default().to_html()
         );
     }
-    match sender.send(players).await {
-        Ok(()) => {}
-        Err(_) => eprintln!("failed to send tablist..."),
+    if let Err(_) = sender.send(players).await {
+        eprintln!("failed to send tablist...")
     }
 }
 
@@ -339,10 +340,11 @@ async fn handle_message_event(bot: &Client, message: ChatPacket, state: &State) 
         drop(banned);
         eprintln!("Bot is bannet set to {}", *state.banned.lock().await);
     }
-    {
-        let mut messages = state.messages.lock().await;
-        messages.push(message.message());
-    }
+
+    let mut messages = state.messages.lock().await;
+    messages.push(message.message());
+    drop(messages);
+
     if let Some(ref broadcaster) = state.broadcaster {
         broadcaster.send(WsServerMessage::NewMessage(message.message().to_html()));
     }
@@ -373,9 +375,8 @@ async fn handle_message_event(bot: &Client, message: ChatPacket, state: &State) 
         {
             message = message.set_ping(player.latency.into());
         }
-        match message.insert(conn) {
-            Ok(()) => {}
-            Err(_) => eprintln!("failed writing to db..."),
+        if let Err(_) = message.insert(conn) {
+            eprintln!("failed writing to db...")
         }
     }
 }
