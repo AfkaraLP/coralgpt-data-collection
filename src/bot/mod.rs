@@ -1,3 +1,4 @@
+pub mod stats;
 pub mod tools;
 
 use std::fmt::Write;
@@ -19,6 +20,7 @@ use tokio::time::{sleep, timeout};
 use tokio::{sync::mpsc::Sender, time};
 
 use crate::ENV_VARS;
+use crate::bot::stats::{get_stats, write_player_stats_markdown};
 use crate::bot::tools::{
     AcceptFriendRequest, AddFriend, DeclineFriendRequest, GetCurrentPosition, GetInventory,
     GetNearbyBlocks, GetPartyInfo, GetStats, InviteParty, JoinGame, JoinParty, LeaveParty,
@@ -355,7 +357,7 @@ async fn handle_message_event(bot: &Client, message: ChatPacket, state: &State) 
     }
 
     if message.contains("Roby98 è entrato nella lobby.") {
-        notify_roby_join().await;
+        notify_roby_join(bot, state).await;
     }
     if message.contains("La partita inizia tra") {
         bot.chat("/l");
@@ -385,12 +387,20 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
     }
 }
 
-static WEBHOOK_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
-async fn notify_roby_join() {
-    let body = r##"{"content": "# 📡 **ENTRY DETECTED** <@&1151557434494681139>\n\n### 👤 **User:** `Roby98`\n\n### 🟢 **Status:** `CONNECTED`\n\n> **Note:** The target user **Roby98** has just joined the server!!!"}"##;
-    if let Err(e) = WEBHOOK_CLIENT.post("REDACTED").body(body).header("Content-Type", "application/json").send().await {
-        eprintln!("failed sending webhook: {e:#?}");
+static REQWEST_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+async fn notify_roby_join(bot: &Client, state: &State) {
+    let player_stats = get_stats("Roby98", bot, state).await;
+    let mut content = String::from("Roby98 joined the server!\n**Bedwars Stats:**\n");
+    write_player_stats_markdown(&player_stats, &mut content);
+    if let Err(e) = send_discord_webhook(&content).await {
+        eprintln!("Failed sending roby webhook: {e}");
     }
+}
+
+async fn send_discord_webhook(markdown: &str) -> reqwest::Result<()> {
+    let body = format!("{{\"content\": {markdown}}}");
+    REQWEST_CLIENT.post("REDACTED").body(body).header("Content-Type", "application/json").send().await?;
+    Ok(())
 }
 
 async fn handle_register_login(bot: &Client, message: &ChatPacket, state: &State) {

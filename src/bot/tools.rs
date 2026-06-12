@@ -1020,148 +1020,6 @@ impl ToolCallFn for RemoveFriend<'_, '_> {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct PlayerStats {
-    pub level: Option<u32>,
-    pub xp: Option<u32>,
-    pub coins: Option<u64>,
-    pub kills: Option<u32>,
-    pub deaths: Option<u32>,
-    pub kd: Option<f32>,
-    pub final_kills: Option<u32>,
-    pub final_deaths: Option<u32>,
-    pub fk_fd: Option<f32>,
-    pub beds_broken: Option<u32>,
-    pub wins: Option<u32>,
-    pub losses: Option<u32>,
-    pub winrate: Option<f32>,
-    pub division: Option<String>,
-    pub division_xp: Option<u32>,
-    pub winstreak: Option<u32>,
-    pub max_winstreak: Option<u32>,
-}
-
-impl PlayerStats {
-    pub fn parse_from_chat<I>(lines: I) -> Self
-    where
-        I: IntoIterator,
-        I::Item: AsRef<str>,
-    {
-        let mut stats = Self::default();
-
-        for line in lines {
-            let line = line.as_ref().trim();
-
-            if let Some(v) = line.strip_prefix("Livello: ") {
-                stats.level = v.trim().parse().ok();
-            } else if let Some(v) = line.strip_prefix("XP: ") {
-                stats.xp = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Coins: ") {
-                stats.coins = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Uccisioni: ") {
-                stats.kills = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Morti: ") {
-                stats.deaths = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("K/D: ") {
-                stats.kd = v.parse().ok();
-            } else if let Some(v) = line.strip_prefix("Uccisioni finali: ") {
-                stats.final_kills = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Morti finali: ") {
-                stats.final_deaths = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("FK/FD: ") {
-                stats.fk_fd = v.parse().ok();
-            } else if let Some(v) = line.strip_prefix("Letti distrutti: ") {
-                stats.beds_broken = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Partite vinte: ") {
-                let parts: Vec<_> = v.split_whitespace().collect();
-                if let Some(win_loss) = parts.first() {
-                    let mut wl = win_loss.split('/');
-                    stats.wins = wl.next().and_then(|v| v.replace(',', "").parse().ok());
-                    stats.losses = wl.next().and_then(|v| v.replace(',', "").parse().ok());
-                }
-
-                if let Some(rate) = parts.get(1) {
-                    stats.winrate = rate
-                        .trim_matches(|c| c == '(' || c == ')' || c == '%')
-                        .parse()
-                        .ok();
-                }
-            } else if let Some(v) = line.strip_prefix("Divisione: ") {
-                if let Some((name, _)) = v.split_once('(') {
-                    stats.division = Some(name.trim().to_string());
-                }
-            } else if let Some(v) = line.strip_prefix("XP Divisione: ") {
-                stats.division_xp = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Winstreak/Max winstreak: ") {
-                let mut parts = v.split('/');
-                stats.winstreak = parts.next().and_then(|v| v.trim().parse().ok());
-                stats.max_winstreak = parts.next().and_then(|v| v.trim().parse().ok());
-            }
-        }
-
-        stats
-    }
-    pub fn player_stats_to_llm_text(&self) -> String {
-        let mut parts = Vec::new();
-
-        if let Some(level) = self.level {
-            parts.push(format!("level {level}"));
-        }
-
-        if let Some(coins) = self.coins {
-            parts.push(format!("{coins} coins"));
-        }
-
-        if let (Some(k), Some(d)) = (self.kills, self.deaths) {
-            if let Some(kd) = self.kd {
-                parts.push(format!("{k} kills and {d} deaths (K/D {kd:.2})"));
-            } else {
-                parts.push(format!("{k} kills and {d} deaths"));
-            }
-        }
-
-        if let (Some(fk), Some(fd)) = (self.final_kills, self.final_deaths) {
-            if let Some(r) = self.fk_fd {
-                parts.push(format!(
-                    "{fk} final kills and {fd} final deaths (FK/FD {r:.2})"
-                ));
-            } else {
-                parts.push(format!("{fk} final kills and {fd} final deaths"));
-            }
-        }
-
-        if let Some(beds) = self.beds_broken {
-            parts.push(format!("{beds} beds broken"));
-        }
-
-        if let (Some(w), Some(l)) = (self.wins, self.losses) {
-            if let Some(rate) = self.winrate {
-                parts.push(format!("{w} wins and {l} losses ({rate:.2}% winrate)"));
-            } else {
-                parts.push(format!("{w} wins and {l} losses"));
-            }
-        }
-
-        if let Some(div) = &self.division {
-            if let Some(xp) = self.division_xp {
-                parts.push(format!("division {div} with {xp} division XP"));
-            } else {
-                parts.push(format!("division {div}"));
-            }
-        }
-
-        if let Some(ws) = self.winstreak {
-            if let Some(max) = self.max_winstreak {
-                parts.push(format!("current winstreak {ws} (max {max})"));
-            } else {
-                parts.push(format!("winstreak {ws}"));
-            }
-        }
-
-        parts.join(", ")
-    }
-}
-
 pub struct GetStats<'a, 'b>(&'a Client, &'b State);
 
 impl<'a, 'b> GetStats<'a, 'b> {
@@ -1180,21 +1038,11 @@ impl ToolCallFn for GetStats<'_, '_> {
         "Retrieve detailed Bedwars player statistics for any player. This shows their performance metrics including level, wins, kills, K/D ratio, beds broken, and more.\n\nUse this when:\n- Checking your own stats\n- Viewing another player's stats to see their skill level\n- Comparing players\n- Seeing someone's winstreak or division\n\nNote: Returns a formatted summary of the player's stats. Filters out spam messages to find the stats data."
     }
 
-    #[allow(clippy::significant_drop_tightening)]
     async fn invoke(&self, args: &serde_json::Value) -> String {
         let Some(serde_json::Value::String(username)) = args.get("username") else {
             return "please provide a username string for whose stats to get".to_string();
         };
-        self.0.chat(format!("/stats {username}"));
-        let past_messages = self.1.messages.clone();
-        let username = username.clone();
-        sleep(Duration::from_secs(1)).await;
-        let past_messages = past_messages.lock().await;
-        let past_messages = past_messages
-            .iter()
-            .filter(|v| !is_spam_message(v.to_string()))
-            .take(25);
-        let stats = PlayerStats::parse_from_chat(past_messages.map(ToString::to_string));
+        let stats = super::get_stats(username, self.0, self.1).await;
         let stats_text = stats.player_stats_to_llm_text();
         println!("got stats: {stats_text:#?}");
         format!("{username}'s stats: {stats_text}")
