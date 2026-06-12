@@ -14,6 +14,7 @@ use azalea::{
 };
 use openai_client::OpenAIClient;
 use regex::Regex;
+use tokio::task;
 use tokio::time::{sleep, timeout};
 use tokio::{sync::mpsc::Sender, time};
 
@@ -50,49 +51,65 @@ pub enum BotLocation {
     BedwarsLobby,
 }
 
+pub async fn abort_task(slot: &tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>) {
+    let old_task = slot.lock().await.take();
+    if let Some(task) = old_task {
+        task.abort();
+    }
+}
+
+pub async fn replace_task(
+    slot: &tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    new_task: tokio::task::JoinHandle<()>,
+) {
+    let old = slot.lock().await.replace(new_task);
+    if let Some(old) = old {
+        old.abort();
+    }
+}
+
 pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<()> {
     match event {
         Event::Spawn => {
             let pwd = &ENV_VARS.password;
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(Duration::from_millis(500)).await;
             bot.chat(format!("/login {pwd}"));
-            let task = tokio::task::spawn(async move {
-                let mut interval = time::interval(Duration::from_secs(5));
+            replace_task(
+                &state.bot_activity_task,
+                task::spawn(async move {
+                    let mut interval = time::interval(Duration::from_secs(5));
 
-                loop {
-                    interval.tick().await;
-                    let is_in_bedwars_lobby = {
-                        let location = state.location.lock().await;
-                        location.eq(&BotLocation::BedwarsLobby)
-                    };
-                    if is_in_bedwars_lobby {
-                        let task =
-                            tokio::task::spawn(
-                                async move { try_stay_in_bedwars_lobby(&bot).await },
-                            );
-                        if let Some(old) = state.stay_in_bedawrs_task.lock().await.replace(task) {
-                            old.abort();
+                    loop {
+                        interval.tick().await;
+                        let is_in_bedwars_lobby = {
+                            let location = state.location.lock().await;
+                            location.eq(&BotLocation::BedwarsLobby)
+                        };
+                        if is_in_bedwars_lobby {
+                            replace_task(
+                                &state.stay_in_bedawrs_task,
+                                task::spawn(async move { try_stay_in_bedwars_lobby(&bot).await }),
+                            )
+                            .await;
+                            break eprintln!("successfully joined the bedwars lobby...");
                         }
-                        break eprintln!("successfully joined the bedwars lobby...");
-                    }
 
-                    if let Ok(Some(inventory)) = bot.open_inventory()
-                        && let Some(slots) = inventory.slots()
-                        && slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
-                    {
-                        let mut location = state.location.lock().await;
-                        *location = BotLocation::BedwarsLobby;
+                        if let Ok(Some(inventory)) = bot.open_inventory()
+                            && let Some(slots) = inventory.slots()
+                            && slots.iter().any(|item| item.kind().eq(&ItemKind::Anvil))
+                        {
+                            let mut location = state.location.lock().await;
+                            *location = BotLocation::BedwarsLobby;
+                        }
+                        if state.location.lock().await.eq(&BotLocation::Lobby)
+                            && !*state.banned.lock().await
+                        {
+                            join_bedwars_lobby(&bot).await;
+                        }
                     }
-                    if state.location.lock().await.eq(&BotLocation::Lobby)
-                        && !*state.banned.lock().await
-                    {
-                        join_bedwars_lobby(&bot).await;
-                    }
-                }
-            });
-            if let Some(old) = state.bot_activity_task.lock().await.replace(task) {
-                old.abort();
-            }
+                }),
+            )
+            .await;
         }
         Event::Chat(message) => {
             handle_message_event(&bot, message, &state).await;
@@ -100,19 +117,11 @@ pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<(
         Event::Tick => {
             handle_instruction(&bot, &state).await;
             if *state.banned.lock().await {
-                if let Some(handle) = state.stay_in_bedawrs_task.lock().await.as_ref() {
-                    handle.abort();
-                }
-                if let Some(handle) = state.bot_activity_task.lock().await.as_ref() {
-                    handle.abort();
-                }
-                *state.stay_in_bedawrs_task.lock().await = None;
-                *state.bot_activity_task.lock().await = None;
+                abort_task(&state.stay_in_bedawrs_task).await;
+                abort_task(&state.bot_activity_task).await;
                 let mut activity = state.banned_task.lock().await;
                 if activity.is_none() {
-                    activity.replace(tokio::task::spawn(
-                        async move { do_banned_mining(&bot).await },
-                    ));
+                    activity.replace(task::spawn(async move { do_banned_mining(&bot).await }));
                 }
             }
         }
@@ -149,7 +158,6 @@ async fn do_banned_mining(bot: &Client) {
                         .max_timeout(Duration::from_secs(2)),
                 )
                 .await;
-                // sleep(Duration::from_millis(200)).await;
             }
         }
     }
@@ -161,13 +169,13 @@ async fn try_stay_in_bedwars_lobby(bot: &Client) {
         interval.tick().await;
         bot.walk(azalea::WalkDirection::Backward);
         bot.jump();
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        sleep(Duration::from_secs(3)).await;
         bot.walk(WalkDirection::BackwardLeft);
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        sleep(Duration::from_millis(500)).await;
         bot.walk(WalkDirection::BackwardRight);
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(1)).await;
         bot.walk(WalkDirection::BackwardLeft);
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        sleep(Duration::from_millis(500)).await;
         bot.walk(WalkDirection::None);
 
         if let Ok(Some(inventory)) = bot.open_inventory()
@@ -286,20 +294,20 @@ async fn send_tab_list(bot: &Client, sender: Sender<String>) {
 async fn join_bedwars_lobby(bot: &Client) {
     eprintln!("Joining bedwars lobby...");
     bot.set_selected_hotbar_slot(4);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
     bot.wait_updates(1).await;
 
     bot.right_click();
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
     bot.wait_updates(1).await;
     let Ok(Some(container)) = bot.wait_for_container_open(Some(400)).await else {
         return eprintln!("failed to get open container...");
     };
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
     let Some(slots) = container.slots() else {
         return eprintln!("failed to get container slots...");
     };
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
     let Some(bed_idx) = slots
         .iter()
         .enumerate()
@@ -311,7 +319,7 @@ async fn join_bedwars_lobby(bot: &Client) {
         }
         return eprintln!("couldn't get the bed idx");
     };
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
     container.left_click(bed_idx);
     bot.set_selected_hotbar_slot(3);
 }
@@ -429,7 +437,6 @@ pub trait AiFunctionality {
     );
 }
 
-#[allow(clippy::too_many_lines)]
 impl AiFunctionality for Client {
     async fn run_agent_loop(
         &self,
