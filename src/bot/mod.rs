@@ -13,7 +13,7 @@ use azalea::{
     WalkDirection, prelude::*, protocol::packets::game::ServerboundGamePacket,
     registry::builtin::ItemKind,
 };
-use openai_client::OpenAIClient;
+use openai_client::{ChatCompletionMessageParam, OpenAIClient};
 use regex::Regex;
 use tokio::task;
 use tokio::time::{sleep, timeout};
@@ -31,7 +31,11 @@ use crate::bot::tools::{
 use crate::{State, message::Message, server::WsServerMessage};
 use openai_client::ToolMap;
 
-const SYSTEM_PROMPT: &str = include_str!("SYSTEM_PROMPT.md");
+const SYSTEM_PROMPT: &str = include_str!("../../prompts/SYSTEM_PROMPT.md");
+const GOAL_ENHANCER: &str = include_str!("../../prompts/GOAL_ENHANCER.md");
+const GOAL_VERIFIER: &str = include_str!("../../prompts/GOAL_VERIFIER.md");
+const GOAL_SENTIMENT: &str = include_str!("../../prompts/GOAL_SENTIMENT.md");
+const GOAL_REFINER: &str = include_str!("../../prompts/GOAL_REFINER.md");
 #[derive(Default, Clone, Component)]
 pub enum Instruction {
     Chat(String),
@@ -249,7 +253,8 @@ async fn handle_agent_instruction(bot: &Client, state: &State, prompt: &str, use
                 tool.get_description()
             );
         }
-        bot.run_agent_loop(ai_client, &system_prompt, prompt, username, tools_map)
+        _ = bot
+            .run_agent_loop(ai_client, &system_prompt, prompt, username, tools_map)
             .await;
     }
 }
@@ -261,6 +266,7 @@ async fn handle_instruction(bot: &Client, state: &State) {
     let Ok(Some(instruction)) = timeout(Duration::from_secs(1), recv.recv()).await else {
         return;
     };
+    drop(guard);
 
     match instruction {
         Instruction::Chat(message) => bot.chat(message),
@@ -289,8 +295,8 @@ async fn send_tab_list(bot: &Client, sender: Sender<String>) {
             player.display_name.unwrap_or_default().to_html()
         );
     }
-    if let Err(_) = sender.send(players).await {
-        eprintln!("failed to send tablist...")
+    if sender.send(players).await.is_err() {
+        eprintln!("failed to send tablist...");
     }
 }
 
@@ -375,8 +381,8 @@ async fn handle_message_event(bot: &Client, message: ChatPacket, state: &State) 
         {
             message = message.set_ping(player.latency.into());
         }
-        if let Err(_) = message.insert(conn) {
-            eprintln!("failed writing to db...")
+        if message.insert(conn).is_err() {
+            eprintln!("failed writing to db...");
         }
     }
 }
@@ -385,6 +391,105 @@ async fn handle_admin_dm(message: &str, username: &str, bot: &Client, state: &St
     if message.starts_with("/agent") {
         let prompt = message.strip_prefix("/agent").unwrap_or(message);
         handle_agent_instruction(bot, state, prompt, username).await;
+    }
+
+    if let Some(openai_client) = &ENV_VARS.openai_client
+        && message.starts_with("/goal")
+    {
+        let goal = message.strip_prefix("/goal").unwrap_or(message);
+        run_goal_loop(username, bot, state, goal, openai_client).await;
+    }
+}
+
+async fn run_goal_loop(
+    username: &str,
+    bot: &Client,
+    state: &State,
+    goal: &str,
+    openai_client: &OpenAIClient,
+) {
+    let system_prompt = GOAL_ENHANCER;
+    let prompt = format!(
+        "Convert this raw goal into a concise 2-3 sentence agent prompt. Be specific about what to do and how to confirm completion. Goal: {goal}"
+    );
+    let mut goal_prompt = openai_client
+        .get_completion(
+            &ChatCompletionMessageParam::start_of_conversation(system_prompt, prompt),
+            &ToolMap::new(),
+        )
+        .await
+        .ok()
+        .and_then(|v| v.first().cloned())
+        .and_then(|v| v.content)
+        .unwrap_or_else(|| format!("fulfill the tasks to reach this goal: {goal}"));
+    for attempt in 0..20 {
+        handle_agent_instruction(bot, state, &goal_prompt, username).await;
+        let system_prompt = GOAL_VERIFIER.replace("$$GOAL$$", goal);
+        let prompt = format!(
+            "Using your available tools, determine if the agent successfully completed this goal. Start with TRUE or FALSE then explain your reasoning. Goal: {goal}"
+        );
+        let Ok(Some(verifier_response)) = openai_client
+            .run_agent(
+                ChatCompletionMessageParam::start_of_conversation(&system_prompt, prompt).to_vec(),
+                &ToolMap::new()
+                    .register_tool(ReadChatHistory::new(state))
+                    .register_tool(ReadTabList::new(bot))
+                    .register_tool(GetPartyInfo::new(bot, state))
+                    .register_tool(GetCurrentPosition::new(bot))
+                    .register_tool(GetInventory::new(bot))
+                    .register_tool(NearbyBlockKinds::new(bot)),
+            )
+            .await
+            .map(|v| v.0.content)
+        else {
+            bot.chat(format!(
+                "/msg {username} failed to verify if goal was reached, stopping."
+            ));
+            break;
+        };
+        let system_prompt = GOAL_SENTIMENT;
+        let prompt = format!(
+            "Based on the verifier's assessment below, determine whether the agent fulfilled the goal. Return only a JSON boolean value: true or false. Goal:\n\n{goal}"
+        );
+        let Ok(completed) = openai_client
+            .get_structured_response::<bool>(&ChatCompletionMessageParam::start_of_conversation(
+                system_prompt,
+                prompt,
+            ))
+            .await
+        else {
+            bot.chat(format!(
+                "/msg {username} failed to get verifier's sentiment."
+            ));
+            break;
+        };
+
+        if completed {
+            bot.chat(format!("/msg {username} agent reached goal"));
+            break;
+        }
+
+        if attempt == 19 {
+            bot.chat(format!(
+                "/msg {username} goal failed after 20 attempts, stopping."
+            ));
+            break;
+        }
+
+        let system_prompt = GOAL_REFINER;
+        let prompt = format!(
+            "The previous agent failed this task. Analyze why based on the verifier's feedback, then write a corrective 2-3 sentence prompt for a new agent.\n\nPrevious task: {goal_prompt}\nVerifier feedback: {verifier_response}\n\nFocus on what went wrong and what the new agent must do differently."
+        );
+        goal_prompt = openai_client
+            .get_completion(
+                &ChatCompletionMessageParam::start_of_conversation(system_prompt, prompt),
+                &ToolMap::new(),
+            )
+            .await
+            .ok()
+            .and_then(|v| v.first().cloned())
+            .and_then(|v| v.content)
+            .unwrap_or_else(|| goal_prompt.clone());
     }
 }
 
@@ -445,7 +550,7 @@ pub trait AiFunctionality {
         prompt: &str,
         username: &str,
         tools_map: ToolMap<'_>,
-    );
+    ) -> Result<Vec<ChatCompletionMessageParam>, ()>;
 }
 
 impl AiFunctionality for Client {
@@ -456,7 +561,7 @@ impl AiFunctionality for Client {
         prompt: &str,
         username: &str,
         tools: ToolMap<'_>,
-    ) {
+    ) -> Result<Vec<ChatCompletionMessageParam>, ()> {
         println!("running agent loop");
         let messages = vec![
             openai_client::ChatCompletionMessageParam::new_system(system_prompt),
@@ -466,13 +571,14 @@ impl AiFunctionality for Client {
             self.chat(format!("/msg {username} failed to run agent loop..."));
             println!("{e:#?}");
         });
-        if let Ok((res, _)) = res {
+        if let Ok((result, _)) = &res {
             eprintln!(
                 "agent loop final response: {}",
-                res.content.as_ref().unwrap_or(&String::new())
+                &result.content.as_ref().unwrap_or(&String::new())
             );
         }
         self.chat(format!("/msg {username} finished agent loop..."));
+        Ok(res?.1)
     }
 }
 

@@ -9,16 +9,13 @@ use azalea::{
 };
 use openai_client::{ChatCompletionMessageParam, ToolCallArg, ToolCallFn, ToolMap};
 use std::{fmt::Write, time::Duration};
-use tokio::{
-    sync::Mutex,
-    time::{Instant, sleep},
-};
+use tokio::time::{Instant, sleep};
 
 const ONE_POINT_EIGHT_MIN_Y: i32 = 0;
 
 use crate::{ENV_VARS, State, buffer::ChatFifoOps, is_spam_message};
 
-const SUBAGENT_PROMPT: &str = include_str!("./SUBAGENT.md");
+const SUBAGENT_PROMPT: &str = include_str!("../../prompts/SUBAGENT.md");
 pub struct SpawnSubAgent<'a> {
     subagent_tools: &'a ToolMap<'a>,
 }
@@ -525,49 +522,6 @@ impl ToolCallFn for SendDirectMessage<'_, '_> {
         ]
     }
 }
-
-pub struct StopAgentLoop<'a>(std::sync::Arc<Mutex<bool>>, String, &'a Client);
-
-impl<'a> StopAgentLoop<'a> {
-    pub const fn new(
-        mutex: std::sync::Arc<Mutex<bool>>,
-        username: String,
-        client: &'a Client,
-    ) -> Self {
-        Self(mutex, username, client)
-    }
-}
-
-#[async_trait]
-impl ToolCallFn for StopAgentLoop<'_> {
-    fn get_name(&self) -> &'static str {
-        "stop_agent_loop"
-    }
-
-    fn get_description(&self) -> &'static str {
-        "Stop the agent loop and terminate all further execution. This is the proper way to end the agent's session when you're done or want to exit.\n\nUse this when:\n- Task is complete and you want to cleanly exit\n- Something went wrong and you want to stop\n- User tells you to stop/leave\n- You want to log off or disconnect\n\nNote: This will inform the user that you're stopping and then terminate the loop. Always use this when done rather than just stopping abruptly."
-    }
-
-    async fn invoke(&self, _args: &serde_json::Value) -> String {
-        let should_stop = self.0.clone();
-        let username = self.1.clone();
-        self.2
-            .chat(format!("/msg {username} Stopping Agent Loop..."));
-        let mut should_stop = should_stop.lock().await;
-        *should_stop = true;
-        drop(should_stop);
-        "stopped the agent loop".to_string()
-    }
-
-    fn get_args(&self) -> Vec<ToolCallArg> {
-        Vec::new()
-    }
-
-    fn get_timeout_wait(&self) -> Duration {
-        Duration::from_millis(0)
-    }
-}
-
 pub struct GetInventory<'a>(&'a Client);
 
 impl<'a> GetInventory<'a> {

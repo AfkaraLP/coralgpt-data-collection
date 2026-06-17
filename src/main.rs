@@ -1,3 +1,4 @@
+#![warn(clippy::pedantic, clippy::nursery)]
 //! A bot that logs chat messages and the number that we've received to the console.
 
 use actix_web::{App, HttpServer, web};
