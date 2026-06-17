@@ -15,18 +15,19 @@ use azalea::{
 };
 use openai_client::{ChatCompletionMessageParam, OpenAIClient};
 use regex::Regex;
+use tokio::sync::{Mutex, mpsc::Sender};
 use tokio::task;
+use tokio::time;
 use tokio::time::{sleep, timeout};
-use tokio::{sync::mpsc::Sender, time};
 
 use crate::ENV_VARS;
 use crate::bot::stats::{get_stats, write_player_stats_markdown};
 use crate::bot::tools::{
     AcceptFriendRequest, AddFriend, DeclineFriendRequest, GetCurrentPosition, GetInventory,
-    GetNearbyBlocks, GetPartyInfo, GetStats, InviteParty, JoinGame, JoinParty, LeaveParty,
-    NearbyBlockKinds, PathFind, QuickCommand, ReadChatHistory, ReadTabList, RemoveFriend,
-    RespondToUser, RunCommand, SelectHotbarSlot, SendChatMessage, SendDirectMessage,
-    SendPartyMessage, Sleep, SpawnSubAgent,
+    GetNearbyBlocks, GetPartyInfo, GetStats, GoalCompleted, GoalNotCompleted, InviteParty,
+    JoinGame, JoinParty, LeaveParty, NearbyBlockKinds, PathFind, QuickCommand, ReadChatHistory,
+    ReadTabList, RemoveFriend, RespondToUser, RunCommand, SelectHotbarSlot, SendChatMessage,
+    SendDirectMessage, SendPartyMessage, Sleep, SpawnSubAgent,
 };
 use crate::{State, message::Message, server::WsServerMessage};
 use openai_client::ToolMap;
@@ -367,9 +368,14 @@ async fn handle_message_event(bot: &Client, message: ChatPacket, state: &State) 
     if message.contains("Roby98 è entrato nella lobby.") {
         notify_roby_join(bot, state).await;
     }
-    if message.contains("La partita inizia tra") {
+    if ["/8)!", "/12)!", "/16)!"]
+        .iter()
+        .any(|v| message.trim().ends_with(v))
+        || message.contains("La partita inizia tra")
+    {
         bot.chat("/l");
     }
+
     if message.to_lowercase().trim().starts_with('[')
         && let Some(mut message) = Message::parse(&message)
         && let Some(conn) = state.conn.lock().await.as_ref()
@@ -422,6 +428,11 @@ async fn run_goal_loop(
         .and_then(|v| v.first().cloned())
         .and_then(|v| v.content)
         .unwrap_or_else(|| format!("fulfill the tasks to reach this goal: {goal}"));
+    bot.chat(format!(
+        "/msg {username} refined prompt: {}",
+        goal_prompt.chars().take(40).collect::<String>()
+    ));
+    eprintln!("refined goal prompt: {goal_prompt}");
     for attempt in 0..20 {
         handle_agent_instruction(bot, state, &goal_prompt, username).await;
         let system_prompt = GOAL_VERIFIER.replace("$$GOAL$$", goal);
@@ -437,7 +448,8 @@ async fn run_goal_loop(
                     .register_tool(GetPartyInfo::new(bot, state))
                     .register_tool(GetCurrentPosition::new(bot))
                     .register_tool(GetInventory::new(bot))
-                    .register_tool(NearbyBlockKinds::new(bot)),
+                    .register_tool(NearbyBlockKinds::new(bot))
+                    .register_tool(RunCommand::new(bot, state)),
             )
             .await
             .map(|v| v.0.content)
@@ -447,22 +459,35 @@ async fn run_goal_loop(
             ));
             break;
         };
-        let system_prompt = GOAL_SENTIMENT;
+        bot.chat(format!(
+            "/msg {username} verifier: {}",
+            &verifier_response[..40.min(verifier_response.len())]
+        ));
+        eprintln!("verifier: {verifier_response}");
+        eprintln!("running sentiment agent with tools...");
+        let goal_result: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let system_prompt = "You will be given a verifier's assessment. if the verifier says the agent fulfilled the goal then call the tool goal_completed. if not, call the tool goal_not_completed.";
         let prompt = format!(
-            "Based on the verifier's assessment below, determine whether the agent fulfilled the goal. Return only a JSON boolean value: true or false. Goal:\n\n{goal}"
+            "Based on the verifier's assessment below, determine whether the agent fulfilled the goal. Call goal_completed or goal_not_completed accordingly.\n\nGoal: {goal}\n\nVerifier's assessment: {verifier_response}"
         );
-        let Ok(completed) = openai_client
-            .get_structured_response::<bool>(&ChatCompletionMessageParam::start_of_conversation(
-                system_prompt,
-                prompt,
-            ))
+        if openai_client
+            .run_agent(
+                ChatCompletionMessageParam::start_of_conversation(system_prompt, prompt).to_vec(),
+                &ToolMap::new()
+                    .register_tool(GoalCompleted(goal_result.clone()))
+                    .register_tool(GoalNotCompleted(goal_result.clone())),
+            )
             .await
-        else {
+            .is_err()
+        {
             bot.chat(format!(
                 "/msg {username} failed to get verifier's sentiment."
             ));
+            eprintln!("failed to verify sentiment...");
             break;
-        };
+        }
+        let completed = *goal_result.lock().await;
+        eprintln!("sentiment result: {completed}");
 
         if completed {
             bot.chat(format!("/msg {username} agent reached goal"));
@@ -490,7 +515,13 @@ async fn run_goal_loop(
             .and_then(|v| v.first().cloned())
             .and_then(|v| v.content)
             .unwrap_or_else(|| goal_prompt.clone());
+        bot.chat(format!(
+            "/msg {username} renewed prompt: {}",
+            goal_prompt.chars().take(40).collect::<String>()
+        ));
+        eprintln!("renewed prompt: {goal_prompt}");
     }
+    bot.chat(format!("/msg {username} finishing goal loop..."));
 }
 
 static REQWEST_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);

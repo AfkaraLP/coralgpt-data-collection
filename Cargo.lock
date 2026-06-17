@@ -2206,7 +2206,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -2800,7 +2800,7 @@ dependencies = [
 [[package]]
 name = "openai-client"
 version = "0.1.0"
-source = "git+https://github.com/AfkaraLP/openai-client.git#74496d7fb3f4af39148d2c3cc079e4b73013a83f"
+source = "git+https://github.com/AfkaraLP/openai-client.git#5a0224281474c8ea195c99e29b5ee8e2e656b21c"
 dependencies = [
  "async-trait",
  "reqwest 0.13.3",
@@ -2995,7 +2995,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3033,7 +3033,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]

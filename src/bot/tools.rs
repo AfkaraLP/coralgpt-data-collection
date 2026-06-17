@@ -8,7 +8,8 @@ use azalea::{
     prelude::PathfinderClientExt,
 };
 use openai_client::{ChatCompletionMessageParam, ToolCallArg, ToolCallFn, ToolMap};
-use std::{fmt::Write, time::Duration};
+use std::{fmt::Write, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep};
 
 const ONE_POINT_EIGHT_MIN_Y: i32 = 0;
@@ -1654,5 +1655,49 @@ impl ToolCallFn for JoinGame<'_, '_> {
             "username",
             "The username of the player whose private game you want to join. They must currently be in a private game for this to work.\n\nExample: \"GameHost123\"",
         )]
+    }
+}
+
+pub struct GoalCompleted(pub Arc<Mutex<bool>>);
+
+#[async_trait]
+impl ToolCallFn for GoalCompleted {
+    fn get_name(&self) -> &'static str {
+        "goal_completed"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "Call this tool when the goal has been successfully completed. The evidence clearly shows the agent fulfilled the objective."
+    }
+
+    async fn invoke(&self, _args: &serde_json::Value) -> String {
+        *self.0.lock().await = true;
+        "Goal marked as completed.".to_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        Vec::new()
+    }
+}
+
+pub struct GoalNotCompleted(pub Arc<Mutex<bool>>);
+
+#[async_trait]
+impl ToolCallFn for GoalNotCompleted {
+    fn get_name(&self) -> &'static str {
+        "goal_not_completed"
+    }
+
+    fn get_description(&self) -> &'static str {
+        "Call this tool when the goal has NOT been successfully completed. The evidence shows the agent failed to fulfill the objective or only partially completed it."
+    }
+
+    async fn invoke(&self, _args: &serde_json::Value) -> String {
+        *self.0.lock().await = false;
+        "Goal marked as not completed.".to_string()
+    }
+
+    fn get_args(&self) -> Vec<ToolCallArg> {
+        Vec::new()
     }
 }
