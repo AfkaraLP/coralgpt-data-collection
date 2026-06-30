@@ -5,6 +5,7 @@ use std::fmt::Write;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use anyhow::{Context, anyhow};
 use azalea::BlockPos;
 use azalea::client_chat::ChatPacket;
 use azalea::pathfinder::PathfinderOpts;
@@ -15,6 +16,7 @@ use azalea::{
 };
 use openai_client::{ChatCompletionMessageParam, OpenAIClient};
 use regex::Regex;
+use serde::Serialize;
 use tokio::sync::{Mutex, mpsc::Sender};
 use tokio::task;
 use tokio::time;
@@ -35,7 +37,7 @@ use openai_client::ToolMap;
 const SYSTEM_PROMPT: &str = include_str!("../../prompts/SYSTEM_PROMPT.md");
 const GOAL_ENHANCER: &str = include_str!("../../prompts/GOAL_ENHANCER.md");
 const GOAL_VERIFIER: &str = include_str!("../../prompts/GOAL_VERIFIER.md");
-const GOAL_SENTIMENT: &str = include_str!("../../prompts/GOAL_SENTIMENT.md");
+// const GOAL_SENTIMENT: &str = include_str!("../../prompts/GOAL_SENTIMENT.md");
 const GOAL_REFINER: &str = include_str!("../../prompts/GOAL_REFINER.md");
 #[derive(Default, Clone, Component)]
 pub enum Instruction {
@@ -338,7 +340,7 @@ static DM_PARSE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(Da (\w+)\) (.*)").unwrap());
 
 async fn handle_message_event(bot: &Client, message: ChatPacket, state: &State) {
-    println!("{}", message.message().to_ansi());
+    // println!("{}", message.message().to_ansi());
     handle_register_login(bot, &message, state).await;
     if message.content().contains("SEI STATO BANNATO!") {
         let mut banned = state.banned.lock().await;
@@ -428,11 +430,8 @@ async fn run_goal_loop(
         .and_then(|v| v.first().cloned())
         .and_then(|v| v.content)
         .unwrap_or_else(|| format!("fulfill the tasks to reach this goal: {goal}"));
-    bot.chat(format!(
-        "/msg {username} refined prompt: {}",
-        goal_prompt.chars().take(40).collect::<String>()
-    ));
-    eprintln!("refined goal prompt: {goal_prompt}");
+    let refined_prompt = goal_prompt.clone();
+    debug_message(bot, username, &format!("refined prompt: {goal_prompt}"));
     for attempt in 0..20 {
         handle_agent_instruction(bot, state, &goal_prompt, username).await;
         let system_prompt = GOAL_VERIFIER.replace("$$GOAL$$", goal);
@@ -454,17 +453,14 @@ async fn run_goal_loop(
             .await
             .map(|v| v.0.content)
         else {
-            bot.chat(format!(
-                "/msg {username} failed to verify if goal was reached, stopping."
-            ));
+            debug_message(
+                bot,
+                username,
+                "failed to verify if goal was reached, stopping.",
+            );
             break;
         };
-        bot.chat(format!(
-            "/msg {username} verifier: {}",
-            &verifier_response[..40.min(verifier_response.len())]
-        ));
-        eprintln!("verifier: {verifier_response}");
-        eprintln!("running sentiment agent with tools...");
+        debug_message(bot, username, &format!("verifier: {verifier_response}"));
         let goal_result: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         let system_prompt = "You will be given a verifier's assessment. if the verifier says the agent fulfilled the goal then call the tool goal_completed. if not, call the tool goal_not_completed.";
         let prompt = format!(
@@ -480,30 +476,25 @@ async fn run_goal_loop(
             .await
             .is_err()
         {
-            bot.chat(format!(
-                "/msg {username} failed to get verifier's sentiment."
-            ));
-            eprintln!("failed to verify sentiment...");
+            debug_message(bot, username, "failed to get verifier's sentiment.");
             break;
         }
         let completed = *goal_result.lock().await;
-        eprintln!("sentiment result: {completed}");
+        debug_message(bot, username, &format!("sentiment result: {completed}"));
 
         if completed {
-            bot.chat(format!("/msg {username} agent reached goal"));
+            debug_message(bot, username, "agent reached goal");
             break;
         }
 
         if attempt == 19 {
-            bot.chat(format!(
-                "/msg {username} goal failed after 20 attempts, stopping."
-            ));
+            debug_message(bot, username, "goal failed after 20 attempts, stopping.");
             break;
         }
 
         let system_prompt = GOAL_REFINER;
         let prompt = format!(
-            "The previous agent failed this task. Analyze why based on the verifier's feedback, then write a corrective 2-3 sentence prompt for a new agent.\n\nPrevious task: {goal_prompt}\nVerifier feedback: {verifier_response}\n\nFocus on what went wrong and what the new agent must do differently."
+            "The previous agent failed this task. Analyze why based on the verifier's feedback, then write a corrective 2-3 sentence prompt for a new agent.\n\nPrevious task: {goal_prompt}\nVerifier feedback: {verifier_response}\n\nFocus on what went wrong and what the new agent must do differently. The final task that should be fulfilled:\n\n{refined_prompt}"
         );
         goal_prompt = openai_client
             .get_completion(
@@ -515,13 +506,18 @@ async fn run_goal_loop(
             .and_then(|v| v.first().cloned())
             .and_then(|v| v.content)
             .unwrap_or_else(|| goal_prompt.clone());
-        bot.chat(format!(
-            "/msg {username} renewed prompt: {}",
-            goal_prompt.chars().take(40).collect::<String>()
-        ));
-        eprintln!("renewed prompt: {goal_prompt}");
+        debug_message(bot, username, &format!("renewed prompt: {goal_prompt}"));
     }
-    bot.chat(format!("/msg {username} finishing goal loop..."));
+    debug_message(bot, username, "finished goal loop...");
+}
+
+pub fn debug_message(bot: &Client, username: &str, message: &str) {
+    let minceraft = format!("/msg {username} {message}")
+        .chars()
+        .take(100)
+        .collect::<String>();
+    bot.chat(minceraft);
+    eprintln!("{message}");
 }
 
 static REQWEST_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
@@ -529,14 +525,19 @@ async fn notify_roby_join(bot: &Client, state: &State) {
     let player_stats = get_stats("Roby98", bot, state).await;
     let mut content = String::from("Roby98 joined the server!\n**Bedwars Stats:**\n");
     write_player_stats_markdown(&player_stats, &mut content);
-    if let Err(e) = send_discord_webhook(&content).await {
+    if let Err(e) = send_discord_webhook(content).await {
         eprintln!("Failed sending roby webhook: {e}");
     }
 }
 
-async fn send_discord_webhook(markdown: &str) -> reqwest::Result<()> {
-    let body = format!("{{\"content\": {markdown}}}");
-    REQWEST_CLIENT.post("REDACTED").body(body).header("Content-Type", "application/json").send().await?;
+async fn send_discord_webhook(markdown: String) -> anyhow::Result<()> {
+    #[derive(Serialize)]
+    struct MessageWebhook {
+        content: String,
+    }
+    let body = MessageWebhook { content: markdown };
+    let body = serde_json::to_string(&body).with_context(|| "failed to turn markdown into json")?;
+    REQWEST_CLIENT.post("REDACTED").body(body).header("Content-Type", "application/json").send().await.map_err(|e| anyhow!("Reqwest: {e}"))?;
     Ok(())
 }
 

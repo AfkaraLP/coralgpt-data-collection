@@ -33,9 +33,9 @@ The new prompt must include:
 
 ## EXAMPLES
 
-**Previous prompt:** "Check BedWars stats for Marco and send them to him."
+**Previous prompt:** "Checked BedWars stats for Marco and sent them to him."
 **Verifier:** "FALSE: Agent got the stats but never sent them. Marco is still waiting."
-**Your output:** "Retrieve BedWars stats for 'Marco' with GetStats. Then send them directly to Marco via DM. Verify in chat history that the DM was delivered. Stop after confirming delivery or receiving an error."
+**Your output:** "Retrieved BedWars stats for 'Marco' with GetStats. Then sent them directly to Marco via DM. Verified in chat history that the DM was delivered."
 
 **Previous prompt:** "Say hello in chat and see who responds."
 **Verifier:** "PARTIAL: Agent said hello but then sent 3 follow-up messages asking 'anyone there?' when nobody responded immediately."
