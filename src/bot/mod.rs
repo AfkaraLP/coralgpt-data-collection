@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use azalea::BlockPos;
+use azalea::block::blocks::Anvil;
 use azalea::client_chat::ChatPacket;
 use azalea::pathfinder::PathfinderOpts;
 use azalea::pathfinder::goals::BlockPosGoal;
@@ -308,6 +309,16 @@ async fn join_bedwars_lobby(bot: &Client) {
     bot.set_selected_hotbar_slot(4);
     sleep(Duration::from_secs(1)).await;
     bot.wait_updates(1).await;
+
+    if let Ok(Some(inv)) = bot.open_inventory()
+        && let Ok(Some(menu)) = inv.menu()
+        && menu
+            .slots()
+            .iter()
+            .any(|slot| slot.kind() == ItemKind::Anvil)
+    {
+        return eprintln!("already in bedwars lobby, cancelling join.");
+    }
 
     bot.right_click();
     sleep(Duration::from_secs(1)).await;

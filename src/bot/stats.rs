@@ -28,25 +28,27 @@ pub struct PlayerStats {
 }
 
 const STAT_PREFIXES: &[&str] = &[
-    "Livello: ",
-    "XP: ",
-    "Coins: ",
-    "Uccisioni: ",
-    "Morti: ",
-    "K/D: ",
-    "Uccisioni finali: ",
-    "Morti finali: ",
-    "FK/FD: ",
-    "Letti distrutti: ",
-    "Partite vinte: ",
-    "Divisione: ",
-    "XP Divisione: ",
-    "Winstreak/Max winstreak: ",
+    "livello: ",
+    "xp: ",
+    "coins: ",
+    "uccisioni: ",
+    "morti: ",
+    "k/d: ",
+    "uccisioni finali: ",
+    "morti finali: ",
+    "fk/fd: ",
+    "letti distrutti: ",
+    "partite vinte: ",
+    "divisione: ",
+    "xp divisione: ",
+    "winstreak/max winstreak: ",
 ];
 
 pub fn is_stat_line(line: &str) -> bool {
     let line = line.trim();
-    STAT_PREFIXES.iter().any(|p| line.starts_with(p))
+    STAT_PREFIXES
+        .iter()
+        .any(|p| line.to_lowercase().starts_with(p))
 }
 
 pub async fn get_stats(name: &str, bot: &Client, state: &State) -> PlayerStats {
