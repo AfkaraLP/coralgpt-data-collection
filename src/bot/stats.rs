@@ -1,12 +1,13 @@
 use std::time::Duration;
 
 use azalea::Client;
+use serde::Serialize;
 use std::fmt::Write as _;
 use tokio::time::sleep;
 
 use crate::State;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct PlayerStats {
     pub level: Option<u32>,
     pub xp: Option<u32>,

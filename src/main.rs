@@ -13,7 +13,6 @@ use std::time::Duration;
 use tokio::sync::{Mutex, mpsc::Receiver};
 use tokio::{signal, task::JoinHandle};
 
-use crate::buffer::FifoBuffer;
 use crate::server::{Broadcaster, MessageLog, bot_messages, ws_handler};
 use crate::{
     bot::{BotLocation, Instruction, handle},
@@ -21,6 +20,7 @@ use crate::{
         bot_agent, bot_chat, bot_get_slot, bot_jump, bot_slot, bot_sneak, bot_tab, bot_walk, index,
     },
 };
+use crate::{buffer::FifoBuffer, server::bot_get_stats};
 use openai_client::OpenAIClient;
 
 mod bot;
@@ -143,6 +143,7 @@ async fn main() -> AppExit {
                 .service(bot_get_slot)
                 .service(bot_messages)
                 .service(bot_agent)
+                .service(bot_get_stats)
         })
         .bind(("127.0.0.1", port))
         .expect("server failed")

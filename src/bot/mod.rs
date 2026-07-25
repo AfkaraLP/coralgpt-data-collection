@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use azalea::BlockPos;
-use azalea::block::blocks::Anvil;
 use azalea::client_chat::ChatPacket;
 use azalea::pathfinder::PathfinderOpts;
 use azalea::pathfinder::goals::BlockPosGoal;
@@ -24,7 +23,7 @@ use tokio::time;
 use tokio::time::{sleep, timeout};
 
 use crate::ENV_VARS;
-use crate::bot::stats::{get_stats, write_player_stats_markdown};
+use crate::bot::stats::{PlayerStats, get_stats, write_player_stats_markdown};
 use crate::bot::tools::{
     AcceptFriendRequest, AddFriend, DeclineFriendRequest, GetCurrentPosition, GetInventory,
     GetNearbyBlocks, GetPartyInfo, GetStats, GoalCompleted, GoalNotCompleted, InviteParty,
@@ -51,6 +50,7 @@ pub enum Instruction {
     Slot(u8),
     GetSlot(Sender<u8>),
     Agent(String),
+    GetStats(String, Sender<PlayerStats>),
 }
 
 #[derive(Default, Clone, Component, PartialEq, Eq, PartialOrd, Ord)]
@@ -286,6 +286,12 @@ async fn handle_instruction(bot: &Client, state: &State) {
         }
         Instruction::Agent(prompt) => {
             handle_agent_instruction(bot, state, &prompt, &ENV_VARS.username).await;
+        }
+        Instruction::GetStats(name, sender) => {
+            let stats = get_stats(&name, bot, state).await;
+            if let Err(e) = sender.send(stats).await {
+                eprintln!("failed to send player stats: {e:#?}")
+            }
         }
     }
 }

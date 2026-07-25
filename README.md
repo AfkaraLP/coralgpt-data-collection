@@ -8,5 +8,6 @@
 - `POST /slot/{slot}`: selects hotbar slot (0-8)
 - `GET /slot`: returns the current hotbar slot
 - `GET /messages`: returns the last 1000 chat messages
+- `GET /stats/{player}`: returns the player's stats as json or null
 
 Use WASD in the web UI to move the bot. Toggle sneak and select hotbar slots with the buttons in the sidebar.

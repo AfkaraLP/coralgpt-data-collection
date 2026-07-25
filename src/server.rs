@@ -12,6 +12,7 @@ use tokio::sync::{
 };
 
 use crate::ENV_VARS;
+use crate::bot::stats::PlayerStats;
 use crate::{bot::Instruction, buffer::FifoBuffer};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -36,6 +37,8 @@ pub enum WsClientMessage {
     GetSlot,
     #[serde(rename = "getMessages")]
     GetMessages,
+    #[serde(rename = "getStats")]
+    GetStats(String),
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -51,6 +54,8 @@ pub enum WsServerMessage {
     Slot(u8),
     #[serde(rename = "result")]
     Result { success: bool, message: String },
+    #[serde(rename = "stats")]
+    Stats(PlayerStats),
 }
 
 pub struct Broadcaster {
@@ -142,6 +147,7 @@ impl WsSession {
                 WsClientMessage::GetMessages => {
                     self.handle_client_get_messages(ctx);
                 }
+                WsClientMessage::GetStats(name) => self.handle_client_get_stats(ctx, &tx, &name),
             }
         } else {
             Self::send_json(
@@ -167,6 +173,35 @@ impl WsSession {
             .into_actor(self)
             .map(|msg, _act, ctx| {
                 if let Ok(json) = serde_json::to_string(&msg) {
+                    ctx.text(json);
+                }
+            }),
+        );
+    }
+
+    fn handle_client_get_stats(
+        &self,
+        ctx: &mut ws::WebsocketContext<Self>,
+        tx: &Sender<Instruction>,
+        name: &str,
+    ) {
+        let tx = tx.clone();
+        let name = name.to_string();
+        ctx.spawn(
+            async move {
+                let (resp_tx, mut resp_rx) = mpsc::channel::<PlayerStats>(1);
+                if tx.send(Instruction::GetStats(name, resp_tx)).await.is_ok()
+                    && let Some(stats) = resp_rx.recv().await
+                {
+                    return Some(WsServerMessage::Stats(stats));
+                }
+                None
+            }
+            .into_actor(self)
+            .map(|msg, _act, ctx| {
+                if let Some(msg) = msg
+                    && let Ok(json) = serde_json::to_string(&msg)
+                {
                     ctx.text(json);
                 }
             }),
@@ -501,6 +536,24 @@ pub async fn bot_slot(
     match data.send(Instruction::Slot(slot)).await {
         Ok(()) => "successfully sent instruction".to_string(),
         Err(_) => "failed".to_string(),
+    }
+}
+
+#[get("/stats/{name}")]
+pub async fn bot_get_stats(
+    path: web::Path<String>,
+    data: web::Data<Arc<Sender<Instruction>>>,
+) -> impl Responder {
+    let (tx, mut rx) = mpsc::channel::<PlayerStats>(1);
+    match data
+        .send(Instruction::GetStats(path.into_inner(), tx))
+        .await
+    {
+        Ok(()) => {
+            let val = rx.recv().await.unwrap_or_default();
+            web::Json(serde_json::to_value(val).ok())
+        }
+        Err(_) => web::Json(None),
     }
 }
 
