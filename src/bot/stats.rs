@@ -121,27 +121,27 @@ impl PlayerStats {
         for line in lines {
             let line = line.as_ref().trim();
 
-            if let Some(v) = line.strip_prefix("Livello: ") {
+            if let Some(v) = line.to_lowercase().strip_prefix("livello: ") {
                 stats.level = v.trim().parse().ok();
-            } else if let Some(v) = line.strip_prefix("XP: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("xp: ") {
                 stats.xp = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Coins: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("coins: ") {
                 stats.coins = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Uccisioni: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("uccisioni: ") {
                 stats.kills = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Morti: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("morti: ") {
                 stats.deaths = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("K/D: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("k/d: ") {
                 stats.kd = v.parse().ok();
-            } else if let Some(v) = line.strip_prefix("Uccisioni finali: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("uccisioni finali: ") {
                 stats.final_kills = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Morti finali: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("morti finali: ") {
                 stats.final_deaths = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("FK/FD: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("fk/fd: ") {
                 stats.fk_fd = v.parse().ok();
-            } else if let Some(v) = line.strip_prefix("Letti distrutti: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("letti distrutti: ") {
                 stats.beds_broken = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Partite vinte: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("partite vinte: ") {
                 let parts: Vec<_> = v.split_whitespace().collect();
                 if let Some(win_loss) = parts.first() {
                     let mut wl = win_loss.split('/');
@@ -155,13 +155,16 @@ impl PlayerStats {
                         .parse()
                         .ok();
                 }
-            } else if let Some(v) = line.strip_prefix("Divisione: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("divisione: ") {
                 if let Some((name, _)) = v.split_once('(') {
                     stats.division = Some(name.trim().to_string());
                 }
-            } else if let Some(v) = line.strip_prefix("XP Divisione: ") {
+            } else if let Some(v) = line.to_lowercase().strip_prefix("xp divisione: ") {
                 stats.division_xp = v.replace(',', "").parse().ok();
-            } else if let Some(v) = line.strip_prefix("Winstreak/Max winstreak: ") {
+            } else if let Some(v) = line
+                .to_lowercase()
+                .strip_prefix("winstreak/max winstreak: ")
+            {
                 let mut parts = v.split('/');
                 stats.winstreak = parts.next().and_then(|v| v.trim().parse().ok());
                 stats.max_winstreak = parts.next().and_then(|v| v.trim().parse().ok());

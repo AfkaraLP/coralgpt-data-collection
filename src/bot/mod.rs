@@ -288,9 +288,9 @@ async fn handle_instruction(bot: &Client, state: &State) {
             handle_agent_instruction(bot, state, &prompt, &ENV_VARS.username).await;
         }
         Instruction::GetStats(name, sender) => {
-            let stats = get_stats(&name, bot, state).await;
-            if let Err(e) = sender.send(stats).await {
-                eprintln!("failed to send player stats: {e:#?}")
+            let player_stats = get_stats(&name, bot, state).await;
+            if let Err(e) = sender.send(player_stats).await {
+                eprintln!("failed to send player stats: {e:#?}");
             }
         }
     }
