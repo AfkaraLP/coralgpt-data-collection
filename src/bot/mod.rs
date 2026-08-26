@@ -78,6 +78,21 @@ pub async fn replace_task(
     }
 }
 
+fn try_set_selected_hotbar_slot(bot: &Client, slot: u8) -> bool {
+    if bot.selected_hotbar_slot().is_err() {
+        return false;
+    }
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bot.set_selected_hotbar_slot(slot);
+    })) {
+        Ok(()) => true,
+        Err(_) => {
+            eprintln!("inventory not ready; will retry hotbar selection");
+            false
+        }
+    }
+}
+
 pub async fn handle(bot: Client, event: Event, state: State) -> anyhow::Result<()> {
     match event {
         Event::Spawn => {
@@ -278,7 +293,9 @@ async fn handle_instruction(bot: &Client, state: &State) {
         Instruction::TabList(sender) => send_tab_list(bot, sender).await,
         Instruction::Walk(direction) => bot.walk(direction),
         Instruction::Sneak(sneaking) => _ = bot.set_crouching(sneaking),
-        Instruction::Slot(slot) => bot.set_selected_hotbar_slot(slot),
+        Instruction::Slot(slot) => {
+            _ = try_set_selected_hotbar_slot(bot, slot);
+        }
         Instruction::GetSlot(sender) => {
             _ = sender
                 .send(bot.selected_hotbar_slot().unwrap_or_default())
@@ -312,7 +329,10 @@ async fn send_tab_list(bot: &Client, sender: Sender<String>) {
 
 async fn join_bedwars_lobby(bot: &Client) {
     eprintln!("Joining bedwars lobby...");
-    bot.set_selected_hotbar_slot(4);
+    if !try_set_selected_hotbar_slot(bot, 4) {
+        eprintln!("inventory not ready before lobby join; retrying later");
+        return;
+    }
     sleep(Duration::from_secs(1)).await;
     bot.wait_updates(1).await;
 
@@ -350,7 +370,7 @@ async fn join_bedwars_lobby(bot: &Client) {
     };
     sleep(Duration::from_secs(1)).await;
     container.left_click(bed_idx);
-    bot.set_selected_hotbar_slot(3);
+    _ = try_set_selected_hotbar_slot(bot, 3);
 }
 
 static DM_PARSE_REGEX: LazyLock<Regex> =
