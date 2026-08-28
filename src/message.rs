@@ -28,7 +28,23 @@ impl Message {
 
         let (rank, name) = match metadata.clone().count() {
             1 => ("Non".to_string(), metadata.next()?.to_string()),
-            2 => (metadata.next()?.to_string(), metadata.next()?.to_string()),
+            2 => {
+                let rank = metadata.next()?.to_string();
+                if [
+                    "[AZZURRO]",
+                    "[BIANCO]",
+                    "[BLU]",
+                    "[GIALLO]",
+                    "[ROSA]",
+                    "[ROSSO]",
+                    "[VERDE]",
+                ]
+                .contains(&rank.as_str())
+                {
+                    return None;
+                }
+                (rank, metadata.next()?.to_string())
+            }
             _ => return None,
         };
 
