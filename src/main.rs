@@ -35,6 +35,7 @@ pub struct EnvVars {
     pub db_path: String,
     pub openai_client: Option<OpenAIClient>,
     pub bot_clan_name: Option<String>,
+    pub discord_webhook_url: String,
 }
 
 pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
@@ -46,6 +47,8 @@ pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
         .parse()
         .unwrap();
     let db_path: String = dotenvy::var("DB_PATH").expect("Please set DB_PATH env var");
+    let discord_webhook_url =
+        dotenvy::var("DISCORD_WEBHOOK_URL").expect("Please set DISCORD_WEBHOOK_URL env var");
     let openai_client = if let Ok(url) = dotenvy::var("OPENAI_URL")
         && let Ok(model) = dotenvy::var("MODEL")
     {
@@ -67,6 +70,7 @@ pub static ENV_VARS: LazyLock<EnvVars> = LazyLock::new(|| {
         db_path,
         openai_client,
         bot_clan_name,
+        discord_webhook_url,
     }
 });
 

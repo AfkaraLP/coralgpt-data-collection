@@ -574,7 +574,13 @@ async fn send_discord_webhook(markdown: String) -> anyhow::Result<()> {
     }
     let body = MessageWebhook { content: markdown };
     let body = serde_json::to_string(&body).with_context(|| "failed to turn markdown into json")?;
-    REQWEST_CLIENT.post("REDACTED").body(body).header("Content-Type", "application/json").send().await.map_err(|e| anyhow!("Reqwest: {e}"))?;
+    REQWEST_CLIENT
+        .post(&ENV_VARS.discord_webhook_url)
+        .body(body)
+        .header("Content-Type", "application/json")
+        .send()
+        .await
+        .map_err(|e| anyhow!("Reqwest: {}", e.without_url()))?;
     Ok(())
 }
 
